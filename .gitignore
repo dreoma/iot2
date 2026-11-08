@@ -1,0 +1,60 @@
+# Секреты и личные настройки окружения
+.env
+.env.*
+!.env.example
+*.local.json
+*.local.yml
+*.local.yaml
+# Этот override — часть тестового окружения, его нужно хранить в Git.
+!/tests/compose.local.yml
+
+# Локальные сертификаты и приватные ключи
+/certs/*
+!/certs/.gitkeep
+*.key
+*.pem
+*.p12
+*.pfx
+
+# Сборка C++ / CMake (на любом уровне проекта)
+build/
+build-*/
+cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+CTestTestfile.cmake
+Testing/
+compile_commands.json
+*.o
+*.obj
+*.a
+*.so
+*.so.*
+*.dylib
+*.dll
+*.exe
+*.dSYM/
+/iot-core/iot-core
+/http-adapter/http-adapter
+
+# Зависимости при ручной сборке
+/.deps/
+/_deps/
+
+# Логи, временные файлы и Python-кэш тестов
+*.log
+*.tmp
+*.swp
+*.swo
+*~
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+
+# Локальные настройки редакторов и macOS
+.idea/
+.vscode/
+.DS_Store
+._*

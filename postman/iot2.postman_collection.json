@@ -1,0 +1,798 @@
+{
+  "info": {
+    "name": "IoT2 — ручная проверка",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "description": "Запускайте папку «01 Полный цикл» по порядку, вручную или Runner. ID сохраняются в переменные коллекции. Папка 02 — дополнительные действия; папка 03 удаляет только созданные тестовые сущности. HTTPS certificate verification выключена только для запросов коллекции к локальному проекту. Письма: http://localhost:8025. Не содержит токенов и секретов."
+  },
+  "variable": [
+    {
+      "key": "iot2_core",
+      "value": "https://localhost:8443"
+    },
+    {
+      "key": "iot2_adapter",
+      "value": "http://localhost:8081"
+    },
+    {
+      "key": "iot2_user_id",
+      "value": ""
+    },
+    {
+      "key": "iot2_device_id",
+      "value": ""
+    },
+    {
+      "key": "iot2_rule_id",
+      "value": ""
+    },
+    {
+      "key": "iot2_test_mail",
+      "value": ""
+    },
+    {
+      "key": "iot2_test_telegram",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "01 Полный цикл — выполнить по порядку",
+      "item": [
+        {
+          "name": "01 Создать тестового пользователя",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{iot2_core}}/users",
+            "description": "Локальная проверка iot2. Только синтетические тестовые данные.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"mail\": \"{{iot2_test_mail}}\",\n  \"telegram_id\": {{iot2_test_telegram}}\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const stamp = Date.now();",
+                  "pm.collectionVariables.set(\"iot2_test_mail\", \"postman-\" + stamp + \"@example.com\");",
+                  "pm.collectionVariables.set(\"iot2_test_telegram\", 9000000000000 + stamp);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 201\", () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set(\"iot2_user_id\", pm.response.json().id);"
+                ]
+              }
+            }
+          ],
+          "protocolProfileBehavior": {
+            "strictSSL": false
+          }
+        },
+        {
+          "name": "02 Создать устройство",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{iot2_core}}/devices",
+            "description": "Локальная проверка iot2. Только синтетические тестовые данные.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Postman IoT2 Sensor\",\n  \"user_id\": {{iot2_user_id}},\n  \"notifications_enabled\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 201\", () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set(\"iot2_device_id\", pm.response.json().id);"
+                ]
+              }
+            }
+          ],
+          "protocolProfileBehavior": {
+            "strictSSL": false
+          }
+        },
+        {
+          "name": "03 Создать правило temperature > 30",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{iot2_core}}/rules",
+            "description": "Локальная проверка iot2. Только синтетические тестовые данные.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"device_id\": {{iot2_device_id}},\n  \"field\": \"temperature\",\n  \"operator\": \"gt\",\n  \"threshold\": 30,\n  \"message\": \"Postman: температура превысила 30 °C\",\n  \"enabled\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 201\", () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set(\"iot2_rule_id\", pm.response.json().id);"
+                ]
+              }
+            }
+          ],
+          "protocolProfileBehavior": {
+            "strictSSL": false
+          }
+        },
+        {
+          "name": "04 Температура 20 — без уведомления",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{iot2_adapter}}/telemetry",
+            "description": "Локальная проверка iot2. Только синтетические тестовые данные.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"device_id\": {{iot2_device_id}},\n  \"data\": {\n    \"temperature\": 20\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 201\", () => pm.response.to.have.status(201));",
+                  "const data = pm.response.json();",
+                  "pm.test(\"Правила проверены\", () => pm.expect(data.rules_evaluated).to.eql(true));",
+                  "pm.test(\"Создано уведомлений: 0\", () => pm.expect(data.notifications_created).to.eql(0));"
+                ]
+              }
+            }
+          ],
+          "protocolProfileBehavior": {
+            "strictSSL": false
+          }
+        },
+        {
+          "name": "05 Температура 35 — уведомление",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{iot2_adapter}}/telemetry",
+            "description": "Локальная проверка iot2. Только синтетические тестовые данные.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"device_id\": {{iot2_device_id}},\n  \"data\": {\n    \"temperature\": 35\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 201\", () => pm.response.to.have.status(201));",
+                  "const data = pm.response.json();",
+                  "pm.test(\"Правила проверены\", () => pm.expect(data.rules_evaluated).to.eql(true));",
+                  "pm.test(\"Создано уведомлений: 1\", () => pm.expect(data.notifications_created).to.eql(1));"
+                ]
+              }
+            }
+          ],
+          "protocolProfileBehavior": {
+            "strictSSL": false
+          }
+        },
+        {
+          "name": "06 Температура 36 — без дубля",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{iot2_adapter}}/telemetry",
+            "description": "Локальная проверка iot2. Только синтетические тестовые данные.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"device_id\": {{iot2_device_id}},\n  \"data\": {\n    \"temperature\": 36\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 201\", () => pm.response.to.have.status(201));",
+                  "const data = pm.response.json();",
+                  "pm.test(\"Правила проверены\", () => pm.expect(data.rules_evaluated).to.eql(true));",
+                  "pm.test(\"Создано уведомлений: 0\", () => pm.expect(data.notifications_created).to.eql(0));"
+                ]
+              }
+            }
+          ],
+          "protocolProfileBehavior": {
+            "strictSSL": false
+          }
+        },
+        {
+          "name": "07 Получить устройство и телеметрию",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{iot2_core}}/devices/{{iot2_device_id}}",
+            "description": "Локальная проверка iot2. Только синтетические тестовые данные."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"Телеметрия сохранена\", () => pm.expect(pm.response.json().telemetry.length).to.be.at.least(3));"
+                ]
+              }
+            }
+          ],
+          "protocolProfileBehavior": {
+            "strictSSL": false
+          }
+        },
+        {
+          "name": "08 Получить правила устройства",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{iot2_core}}/devices/{{iot2_device_id}}/rules",
+            "description": "Локальная проверка iot2. Только синтетические тестовые данные."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"Правило найдено\", () => pm.expect(pm.response.json().some(r => String(r.id) === String(pm.collectionVariables.get(\"iot2_rule_id\")))).to.eql(true));"
+                ]
+              }
+            }
+          ],
+          "protocolProfileBehavior": {
+            "strictSSL": false
+          }
+        },
+        {
+          "name": "09 Получить уведомления пользователя",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{iot2_core}}/users/{{iot2_user_id}}/notifications",
+            "description": "Локальная проверка iot2. Только синтетические тестовые данные."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"Одно срабатывание правила\", () => pm.expect(pm.response.json().length).to.eql(1));"
+                ]
+              }
+            }
+          ],
+          "protocolProfileBehavior": {
+            "strictSSL": false
+          }
+        },
+        {
+          "name": "10 Получить пользователя с устройствами",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{iot2_core}}/users/{{iot2_user_id}}",
+            "description": "Локальная проверка iot2. Только синтетические тестовые данные."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"Устройство связано с пользователем\", () => pm.expect(pm.response.json().users_devices.length).to.eql(1));"
+                ]
+              }
+            }
+          ],
+          "protocolProfileBehavior": {
+            "strictSSL": false
+          }
+        },
+        {
+          "name": "11 Получить тестовые письма Mailpit",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "http://localhost:8025/api/v1/messages",
+            "description": "Локальная проверка iot2. Только синтетические тестовые данные."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "protocolProfileBehavior": {
+            "strictSSL": false
+          }
+        }
+      ]
+    },
+    {
+      "name": "02 Дополнительные ручные запросы",
+      "item": [
+        {
+          "name": "Все пользователи",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{iot2_core}}/users",
+            "description": "Локальная проверка iot2. Только синтетические тестовые данные."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "protocolProfileBehavior": {
+            "strictSSL": false
+          }
+        },
+        {
+          "name": "Все устройства",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{iot2_core}}/devices",
+            "description": "Локальная проверка iot2. Только синтетические тестовые данные."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "protocolProfileBehavior": {
+            "strictSSL": false
+          }
+        },
+        {
+          "name": "Изменить пользователя",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{iot2_core}}/users/{{iot2_user_id}}",
+            "description": "Локальная проверка iot2. Только синтетические тестовые данные.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"mail\": \"{{iot2_test_mail}}\",\n  \"telegram_id\": {{iot2_test_telegram}}\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "protocolProfileBehavior": {
+            "strictSSL": false
+          }
+        },
+        {
+          "name": "Отключить уведомления устройства",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{iot2_core}}/devices/{{iot2_device_id}}",
+            "description": "Локальная проверка iot2. Только синтетические тестовые данные.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Postman IoT2 Sensor\",\n  \"user_id\": {{iot2_user_id}},\n  \"notifications_enabled\": false\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "protocolProfileBehavior": {
+            "strictSSL": false
+          }
+        },
+        {
+          "name": "Включить уведомления устройства",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{iot2_core}}/devices/{{iot2_device_id}}",
+            "description": "Локальная проверка iot2. Только синтетические тестовые данные.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Postman IoT2 Sensor\",\n  \"user_id\": {{iot2_user_id}},\n  \"notifications_enabled\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "protocolProfileBehavior": {
+            "strictSSL": false
+          }
+        },
+        {
+          "name": "Отключить правило",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{iot2_core}}/rules/{{iot2_rule_id}}",
+            "description": "Локальная проверка iot2. Только синтетические тестовые данные.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"device_id\": {{iot2_device_id}},\n  \"field\": \"temperature\",\n  \"operator\": \"gt\",\n  \"threshold\": 30,\n  \"message\": \"Postman: температура превысила 30 °C\",\n  \"enabled\": false\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "protocolProfileBehavior": {
+            "strictSSL": false
+          }
+        },
+        {
+          "name": "Включить правило",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{iot2_core}}/rules/{{iot2_rule_id}}",
+            "description": "Локальная проверка iot2. Только синтетические тестовые данные.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"device_id\": {{iot2_device_id}},\n  \"field\": \"temperature\",\n  \"operator\": \"gt\",\n  \"threshold\": 30,\n  \"message\": \"Postman: температура превысила 30 °C\",\n  \"enabled\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "protocolProfileBehavior": {
+            "strictSSL": false
+          }
+        },
+        {
+          "name": "Температура 25 — сброс порога",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{iot2_adapter}}/telemetry",
+            "description": "Локальная проверка iot2. Только синтетические тестовые данные.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"device_id\": {{iot2_device_id}},\n  \"data\": {\n    \"temperature\": 25\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 201\", () => pm.response.to.have.status(201));",
+                  "const data = pm.response.json();",
+                  "pm.test(\"Правила проверены\", () => pm.expect(data.rules_evaluated).to.eql(true));",
+                  "pm.test(\"Создано уведомлений: 0\", () => pm.expect(data.notifications_created).to.eql(0));"
+                ]
+              }
+            }
+          ],
+          "protocolProfileBehavior": {
+            "strictSSL": false
+          }
+        },
+        {
+          "name": "Температура 40 — новое уведомление",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{iot2_adapter}}/telemetry",
+            "description": "Локальная проверка iot2. Только синтетические тестовые данные.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"device_id\": {{iot2_device_id}},\n  \"data\": {\n    \"temperature\": 40\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 201\", () => pm.response.to.have.status(201));",
+                  "const data = pm.response.json();",
+                  "pm.test(\"Правила проверены\", () => pm.expect(data.rules_evaluated).to.eql(true));",
+                  "pm.test(\"Создано уведомлений: 1\", () => pm.expect(data.notifications_created).to.eql(1));"
+                ]
+              }
+            }
+          ],
+          "protocolProfileBehavior": {
+            "strictSSL": false
+          }
+        }
+      ]
+    },
+    {
+      "name": "03 Очистка только тестовых данных",
+      "item": [
+        {
+          "name": "Удалить тестовое правило",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": "{{iot2_core}}/rules/{{iot2_rule_id}}",
+            "description": "Локальная проверка iot2. Только синтетические тестовые данные."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 204\", () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ],
+          "protocolProfileBehavior": {
+            "strictSSL": false
+          }
+        },
+        {
+          "name": "Удалить тестовое устройство",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": "{{iot2_core}}/devices/{{iot2_device_id}}",
+            "description": "Локальная проверка iot2. Только синтетические тестовые данные."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 204\", () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ],
+          "protocolProfileBehavior": {
+            "strictSSL": false
+          }
+        },
+        {
+          "name": "Удалить тестового пользователя",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": "{{iot2_core}}/users/{{iot2_user_id}}",
+            "description": "Локальная проверка iot2. Только синтетические тестовые данные."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 204\", () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ],
+          "protocolProfileBehavior": {
+            "strictSSL": false
+          }
+        }
+      ]
+    }
+  ]
+}

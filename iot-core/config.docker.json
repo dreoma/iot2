@@ -1,0 +1,27 @@
+{
+  "listeners": [
+    { "address": "0.0.0.0", "port": 8080 }
+  ],
+  "db_clients": [
+    {
+      "name": "postgres",
+      "rdbms": "postgresql",
+      "host": "db",
+      "port": 5432,
+      "dbname": "iot_core",
+      "user": "iot_user",
+      "passwd": "iot_password",
+      "connection_number": 1
+    },
+    {
+      "name": "rules",
+      "rdbms": "postgresql",
+      "host": "rules-db",
+      "port": 5432,
+      "dbname": "iot_rules",
+      "user": "rules_user",
+      "passwd": "rules_password",
+      "connection_number": 1
+    }
+  ]
+}

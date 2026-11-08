@@ -1,0 +1,6 @@
+# Проверки доставки используют только локальную почту, без реального Telegram.
+services:
+  iot-core:
+    environment:
+      IOT_TELEGRAM_BOT_TOKEN: ""
+      IOT_SMTP_URL: smtp://mailpit:1025

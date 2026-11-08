@@ -1,0 +1,481 @@
+{
+  "info": {
+    "name": "IoT2 — уведомления Email + Telegram",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "description": "Заполните Variables: notify_mail и notify_chat_id. Токен бота и SMTP задаются в .env сервера, не здесь. Выполняйте папку 01 по порядку. Запрос 05 вызывает отправку в оба настроенных канала. Сервис использует users.mail и users.telegram_id. По умолчанию Email попадает в Mailpit http://localhost:8025; для настоящего почтового ящика нужен внешний SMTP. HTTP 201/история подтверждают срабатывание правила, а не доставку. Текущие личные данные в файл не включены. SSL verification отключена только для этих локальных HTTPS-запросов."
+  },
+  "variable": [
+    {
+      "key": "notify_mail",
+      "value": "",
+      "description": "Ваша почта — заполнить вручную"
+    },
+    {
+      "key": "notify_chat_id",
+      "value": "",
+      "description": "Ваш chat ID от команды /start у настроенного бота, без кавычек"
+    },
+    {
+      "key": "notify_core",
+      "value": "https://localhost:8443"
+    },
+    {
+      "key": "notify_adapter",
+      "value": "http://localhost:8081"
+    },
+    {
+      "key": "notify_user_id",
+      "value": ""
+    },
+    {
+      "key": "notify_device_id",
+      "value": ""
+    },
+    {
+      "key": "notify_rule_id",
+      "value": ""
+    }
+  ],
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "const mail = String(pm.collectionVariables.get(\"notify_mail\") || \"\").trim();",
+          "const chat = String(pm.collectionVariables.get(\"notify_chat_id\") || \"\").trim();",
+          "if (!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(mail)) throw new Error(\"Заполните notify_mail во вкладке Variables коллекции\");",
+          "if (!/^-?\\d+$/.test(chat) || !Number.isSafeInteger(Number(chat)) || Number(chat) === 0) throw new Error(\"Заполните notify_chat_id числовым chat ID из /start у бота\");"
+        ]
+      }
+    }
+  ],
+  "item": [
+    {
+      "name": "01 Проверка Email + Telegram — по порядку",
+      "item": [
+        {
+          "name": "00 Найти существующего пользователя по почте и chat ID",
+          "protocolProfileBehavior": {
+            "strictSSL": false
+          },
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{notify_core}}/users"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "const users = pm.response.json();",
+                  "const mail = pm.collectionVariables.get(\"notify_mail\");",
+                  "const chat = String(pm.collectionVariables.get(\"notify_chat_id\"));",
+                  "const existing = users.find(u => u.mail === mail && String(u.telegram_id) === chat);",
+                  "pm.collectionVariables.set(\"notify_user_id\", existing ? existing.id : \"\");",
+                  "if (!existing && users.some(u => u.mail === mail || String(u.telegram_id) === chat)) throw new Error(\"Почта или chat ID уже заняты другой комбинацией. Проверьте пользователя через GET /users; чужие данные автоматически не изменяются.\");"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "01 Создать пользователя — пропускается, если уже найден",
+          "protocolProfileBehavior": {
+            "strictSSL": false
+          },
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{notify_core}}/users",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"mail\": \"{{notify_mail}}\",\n  \"telegram_id\": {{notify_chat_id}}\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.collectionVariables.get(\"notify_user_id\")) pm.execution.skipRequest();"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 201\", () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set(\"notify_user_id\", pm.response.json().id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "02 Создать устройство с уведомлениями",
+          "protocolProfileBehavior": {
+            "strictSSL": false
+          },
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{notify_core}}/devices",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Проверка уведомлений Postman\",\n  \"user_id\": {{notify_user_id}},\n  \"notifications_enabled\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 201\", () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set(\"notify_device_id\", pm.response.json().id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "03 Создать правило temperature > 30",
+          "protocolProfileBehavior": {
+            "strictSSL": false
+          },
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{notify_core}}/rules",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"device_id\": {{notify_device_id}},\n  \"field\": \"temperature\",\n  \"operator\": \"gt\",\n  \"threshold\": 30,\n  \"message\": \"Проверка уведомлений: температура превысила 30 °C\",\n  \"enabled\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 201\", () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set(\"notify_rule_id\", pm.response.json().id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "04 Температура 20 — исходное значение",
+          "protocolProfileBehavior": {
+            "strictSSL": false
+          },
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{notify_adapter}}/telemetry",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"device_id\": {{notify_device_id}},\n  \"data\": {\"temperature\": 20}\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 201\", () => pm.response.to.have.status(201));",
+                  "const r = pm.response.json();",
+                  "pm.test(\"Правила проверены\", () => pm.expect(r.rules_evaluated).to.eql(true));",
+                  "pm.test(\"Срабатываний: 0\", () => pm.expect(r.notifications_created).to.eql(0));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "05 Температура 35 — отправить Email и Telegram",
+          "protocolProfileBehavior": {
+            "strictSSL": false
+          },
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{notify_adapter}}/telemetry",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"device_id\": {{notify_device_id}},\n  \"data\": {\"temperature\": 35}\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 201\", () => pm.response.to.have.status(201));",
+                  "const r = pm.response.json();",
+                  "pm.test(\"Правила проверены\", () => pm.expect(r.rules_evaluated).to.eql(true));",
+                  "pm.test(\"Срабатываний: 1\", () => pm.expect(r.notifications_created).to.eql(1));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "06 Проверить историю срабатываний — не статус доставки",
+          "protocolProfileBehavior": {
+            "strictSSL": false
+          },
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{notify_core}}/users/{{notify_user_id}}/notifications"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "const rows = pm.response.json().filter(n => String(n.rule_id) === String(pm.collectionVariables.get(\"notify_rule_id\")));",
+                  "pm.test(\"Наше правило сработало\", () => pm.expect(rows.length).to.be.at.least(1));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "07 Температура 36 — убедиться, что нет дубля",
+          "protocolProfileBehavior": {
+            "strictSSL": false
+          },
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{notify_adapter}}/telemetry",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"device_id\": {{notify_device_id}},\n  \"data\": {\"temperature\": 36}\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 201\", () => pm.response.to.have.status(201));",
+                  "const r = pm.response.json();",
+                  "pm.test(\"Правила проверены\", () => pm.expect(r.rules_evaluated).to.eql(true));",
+                  "pm.test(\"Срабатываний: 0\", () => pm.expect(r.notifications_created).to.eql(0));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "08 Посмотреть устройство и телеметрию",
+          "protocolProfileBehavior": {
+            "strictSSL": false
+          },
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{notify_core}}/devices/{{notify_device_id}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "02 Повторная отправка — сначала 25, затем 40",
+      "item": [
+        {
+          "name": "25 °C — не создавать уведомление",
+          "protocolProfileBehavior": {
+            "strictSSL": false
+          },
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{notify_adapter}}/telemetry",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"device_id\": {{notify_device_id}},\n  \"data\": {\"temperature\": 25}\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 201\", () => pm.response.to.have.status(201));",
+                  "const r = pm.response.json();",
+                  "pm.test(\"Правила проверены\", () => pm.expect(r.rules_evaluated).to.eql(true));",
+                  "pm.test(\"Срабатываний: 0\", () => pm.expect(r.notifications_created).to.eql(0));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "40 °C — создать уведомление в оба канала",
+          "protocolProfileBehavior": {
+            "strictSSL": false
+          },
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{notify_adapter}}/telemetry",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"device_id\": {{notify_device_id}},\n  \"data\": {\"temperature\": 40}\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 201\", () => pm.response.to.have.status(201));",
+                  "const r = pm.response.json();",
+                  "pm.test(\"Правила проверены\", () => pm.expect(r.rules_evaluated).to.eql(true));",
+                  "pm.test(\"Срабатываний: 1\", () => pm.expect(r.notifications_created).to.eql(1));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "03 Локальная почта Mailpit",
+      "item": [
+        {
+          "name": "Письма Mailpit — реальные SMTP письма видны только при внешнем SMTP",
+          "protocolProfileBehavior": {
+            "strictSSL": false
+          },
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "http://localhost:8025/api/v1/messages"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
