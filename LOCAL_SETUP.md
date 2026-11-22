@@ -68,16 +68,17 @@ test -f .env || cp .env.example .env
 
 Существующий `.env` не заменяйте: там могут быть рабочий ключ шифрования и токен.
 
-Создайте ключ для нового окружения:
+Для нового окружения выполните команду дважды, чтобы получить два независимых ключа:
 
 ```bash
 openssl rand -hex 32
 ```
 
-Откройте `.env` в редакторе и вставьте результат в `TRAFFIC_KEY_HEX`:
+Вставьте первый ключ в `TRAFFIC_KEY_HEX`, второй в `IOT_PASSWORD_PEPPER_HEX`:
 
 ```dotenv
 TRAFFIC_KEY_HEX=сюда_64_шестнадцатеричных_символа
+IOT_PASSWORD_PEPPER_HEX=сюда_другие_64_шестнадцатеричных_символа
 IOT_TELEGRAM_BOT_TOKEN=
 IOT_SMTP_URL=smtp://mailpit:1025
 IOT_SMTP_USER=
@@ -85,8 +86,10 @@ IOT_SMTP_PASSWORD=
 IOT_SMTP_FROM=iot@example.com
 ```
 
-Если правильный ключ уже задан, новый создавать не нужно. Один и тот же ключ
-передаётся ядру и адаптеру через Compose. `.env` и ключи исключены из Git.
+Если ключ телеметрии уже задан, сохраните его и добавьте только перец
+`IOT_PASSWORD_PEPPER_HEX`. Compose передаёт перец только ядру.
+`.env` исключён из Git. Сохраните перец вместе с резервной копией настроек
+отдельно от БД. При потере перца пароли с ним придётся переустановить.
 
 ## 4. Подготовить HTTPS-сертификаты
 
@@ -131,18 +134,17 @@ PostgreSQL доступен только внутри Docker-сети. Осно�
 ```bash
 curl --noproxy '*' --cacert certs/ca.crt \
   --resolve core-tls:8443:127.0.0.1 \
-  https://core-tls:8443/users
+  -i https://core-tls:8443/users
 ```
 
-Ожидается JSON-массив пользователей, в новой базе — `[]`.
+Без токена ожидается `401 Unauthorized`. [Регистрация, вход и примеры запросов](iot-core/README.md#вход-и-доступ-к-api).
 
 В Postman импортируйте:
 
 - `postman/iot2.postman_collection.json` — полный сценарий с тестовыми данными;
 - `postman/notifications.postman_collection.json` — уведомления на ваши контакты.
 
-Для второй коллекции заполните `notify_mail` и `notify_chat_id` во вкладке
-Variables. Подробности — в `postman/NOTIFICATIONS.md`.
+Для второй коллекции заполните `notify_mail`, `notify_chat_id` и `notify_password` во вкладке Variables. Подробности — в `postman/NOTIFICATIONS.md`.
 
 Телеметрия отправляется в адаптер как обычный JSON:
 
@@ -260,7 +262,8 @@ cmake --build http-adapter/build -j2
 - `http-adapter` запускают из `http-adapter` командой `./build/http-adapter`.
   Укажите `CORE_URL` — адрес HTTPS-входа ядра, `CORE_CA_FILE` — абсолютный путь
   к `certs/ca.crt`. Имя в URL должно совпадать с сертификатом (`core-tls`).
-- Обоим процессам задайте одинаковый `TRAFFIC_KEY_HEX`. При нативном запуске
+- Обоим процессам задайте одинаковый `TRAFFIC_KEY_HEX`, а ядру также задайте
+  `IOT_PASSWORD_PEPPER_HEX`. При нативном запуске
   `.env` автоматически не загружается — переменные нужно экспортировать в shell.
 - Nginx, адреса БД и DNS нужно настроить под нативные процессы отдельно:
   готовый Compose использует Docker-имена `db`, `rules-db`, `iot-core`.

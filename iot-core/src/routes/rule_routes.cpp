@@ -1,5 +1,6 @@
 #include "rule_routes.h"
 #include "repositories/rule_repository.h"
+#include "services/auth.h"
 
 #include <cmath>
 #include <set>
@@ -35,6 +36,20 @@ bool valid(const Json::Value &v)
     return v["operator"] != "delta" || v["threshold"].asDouble() > 0;
 }
 
+void withOwnedDevice(long long deviceId, long long userId, const Callback &done, std::function<void()> action)
+{
+    app().getDbClient("postgres")->execSqlAsync(
+        "SELECT 1 FROM user_devices WHERE device_id=$1 AND user_id=$2",
+        [done, action = std::move(action)](const Result &owner) {
+            if (owner.empty())
+                error(done, k404NotFound, "device not found");
+            else
+                action();
+        },
+        [done](const DrogonDbException &) { error(done, k503ServiceUnavailable, "main database unavailable"); },
+        deviceId, userId);
+}
+
 void save(long long id, const HttpRequestPtr &request, Callback done)
 {
     const auto body = request->getJsonObject();
@@ -44,22 +59,17 @@ void save(long long id, const HttpRequestPtr &request, Callback done)
         return;
     }
     const auto rule = *body;
-    // Владелец берётся из основной БД, а не из тела HTTP-запроса.
-    app().getDbClient("postgres")->execSqlAsync(
-        "SELECT user_id FROM user_devices WHERE device_id=$1",
-        [rule, id, done](const Result &owner) {
-            if (owner.empty()) { error(done, k404NotFound, "device or owner not found"); return; }
-            RuleRepository().save(id, owner[0]["user_id"].as<long long>(), rule,
-                [id, done](const Result &rows) {
-                    if (rows.empty()) { error(done, k404NotFound, "rule not found"); return; }
-                    auto response = HttpResponse::newHttpJsonResponse(ruleJson(rows[0]));
-                    response->setStatusCode(id == 0 ? k201Created : k200OK);
-                    done(response);
-                },
-                [done](const DrogonDbException &) { error(done, k503ServiceUnavailable, "rules database unavailable or invalid rule"); });
-        },
-        [done](const DrogonDbException &) { error(done, k503ServiceUnavailable, "main database unavailable"); },
-        rule["device_id"].asInt64());
+    const auto userId = auth::userId(request);
+    withOwnedDevice(rule["device_id"].asInt64(), userId, done, [rule, id, done, userId] {
+        RuleRepository().save(id, userId, rule,
+            [id, done](const Result &rows) {
+                if (rows.empty()) { error(done, k404NotFound, "rule not found"); return; }
+                auto response = HttpResponse::newHttpJsonResponse(ruleJson(rows[0]));
+                response->setStatusCode(id == 0 ? k201Created : k200OK);
+                done(response);
+            },
+            [done](const DrogonDbException &) { error(done, k503ServiceUnavailable, "rules database unavailable or invalid rule"); });
+    });
 }
 
 void sendList(const Result &rows, const Callback &done)
@@ -73,31 +83,36 @@ void sendList(const Result &rows, const Callback &done)
 void registerRuleRoutes()
 {
     app().registerHandler("/rules",
-        [](const HttpRequestPtr &request, Callback &&done) { save(0, request, done); }, {Post});
+        [](const HttpRequestPtr &request, Callback &&done) { save(0, request, done); }, {Post, "UserAuthFilter"});
     app().registerHandler("/rules/{1}",
         [](const HttpRequestPtr &request, Callback &&done, long long id) {
             if (id <= 0) { error(done, k400BadRequest, "positive rule id required"); return; }
             save(id, request, done);
-        }, {Put});
+        }, {Put, "UserAuthFilter"});
     app().registerHandler("/devices/{1}/rules",
-        [](const HttpRequestPtr &, Callback &&done, long long id) {
-            RuleRepository().list(id,
-                [done](const Result &rows) { sendList(rows, done); },
-                [done](const DrogonDbException &) { error(done, k503ServiceUnavailable, "rules database unavailable"); });
-        }, {Get});
+        [](const HttpRequestPtr &request, Callback &&done, long long id) {
+            const auto userId = auth::userId(request);
+            withOwnedDevice(id, userId, done, [id, userId, done] {
+                RuleRepository().list(id, userId,
+                    [done](const Result &rows) { sendList(rows, done); },
+                    [done](const DrogonDbException &) { error(done, k503ServiceUnavailable, "rules database unavailable"); });
+            });
+        }, {Get, "UserAuthFilter"});
     app().registerHandler("/rules/{1}",
-        [](const HttpRequestPtr &, Callback &&done, long long id) {
-            RuleRepository().remove(id,
+        [](const HttpRequestPtr &request, Callback &&done, long long id) {
+            RuleRepository().remove(id, auth::userId(request),
                 [done](const Result &rows) {
                     if (rows.empty()) { error(done, k404NotFound, "rule not found"); return; }
                     done(HttpResponse::newHttpResponse(k204NoContent, CT_APPLICATION_JSON));
                 },
                 [done](const DrogonDbException &) { error(done, k503ServiceUnavailable, "rules database unavailable"); });
-        }, {Delete});
+        }, {Delete, "UserAuthFilter"});
     app().registerHandler("/users/{1}/notifications",
-        [](const HttpRequestPtr &, Callback &&done, long long id) {
+        [](const HttpRequestPtr &request, Callback &&done, long long id) {
+            if (id != auth::userId(request))
+                return error(done, k404NotFound, "user not found");
             RuleRepository().notifications(id,
                 [done](const Result &rows) { sendList(rows, done); },
                 [done](const DrogonDbException &) { error(done, k503ServiceUnavailable, "rules database unavailable"); });
-        }, {Get});
+        }, {Get, "UserAuthFilter"});
 }

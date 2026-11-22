@@ -1,4 +1,5 @@
 """Проверка запущенных контейнеров: python3 tests/integration.py."""
+from functools import partial
 import json
 import pathlib
 import subprocess
@@ -8,7 +9,7 @@ import os
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 
-def request(method, path, body=None, adapter=False, expected=200):
+def request(method, path, body=None, adapter=False, expected=200, token=None):
     command = ["curl", "--noproxy", "*", "-sS", "--max-time", "10", "-X", method]
     if adapter:
         url = "http://127.0.0.1:8081" + path
@@ -16,6 +17,8 @@ def request(method, path, body=None, adapter=False, expected=200):
         command += ["--cacert", str(ROOT / "certs/ca.crt"),
                     "--resolve", "core-tls:8443:127.0.0.1"]
         url = "https://core-tls:8443" + path
+    if token:
+        command += ["-H", f"Authorization: Bearer {token}"]
     if body is not None:
         command += ["-H", "Content-Type: application/json", "-d", json.dumps(body)]
     output = subprocess.check_output(command + ["-w", "\n%{http_code}", url], text=True)
@@ -25,57 +28,70 @@ def request(method, path, body=None, adapter=False, expected=200):
 
 
 stamp = time.time_ns()
-user_id = device_id = None
-other_user_id = None
+mail = f"integration-{stamp}@example.com"
+password = "Integration password for API"
+user_id = device_id = other_user_id = None
+api = other_api = None
 rule_ids = []
 try:
+    request("GET", "/users", expected=401)
+    request("GET", "/devices", expected=401)
+    request("POST", "/users", {"mail": mail, "telegram_id": stamp}, expected=400)
     user = request("POST", "/users", {
-        "mail": f"integration-{stamp}@example.com", "telegram_id": stamp
+        "mail": mail, "telegram_id": stamp, "password": password
     }, expected=201)
     user_id = user["id"]
-    assert request("GET", f"/users/{user_id}")["telegram_id"] == stamp
-    request("PUT", f"/users/{user_id}", {
-        "mail": f"updated-{stamp}@example.com", "telegram_id": stamp
-    })
-    device = request("POST", "/devices", {
-        "name": "integration", "user_id": user_id, "notifications_enabled": True
+    assert "password" not in user and "password_hash" not in user
+    credentials = {"mail": mail, "password": password}
+    wrong_login = request("POST", "/auth/login", {**credentials, "password": "wrong"}, expected=401)
+    unknown_login = request("POST", "/auth/login",
+                            {**credentials, "mail": "absent@example.com"}, expected=401)
+    assert wrong_login == unknown_login
+    session = request("POST", "/auth/login", credentials)
+    assert session["user_id"] == user_id and session["expires_in"] == 86400
+    token = session["token"]
+    api = partial(request, token=token)
+
+    assert api("GET", f"/users/{user_id}")["telegram_id"] == stamp
+    updated_mail = f"updated-{stamp}@example.com"
+    api("PUT", f"/users/{user_id}", {"mail": updated_mail, "telegram_id": stamp})
+    device = api("POST", "/devices", {
+        "name": "integration", "notifications_enabled": True
     }, expected=201)
     device_id = device["id"]
-    request("PUT", f"/devices/{device_id}", {
-        "name": "updated", "user_id": user_id, "notifications_enabled": False
-    })
-    assert request("GET", f"/users/{user_id}")["users_devices"][0]["id"] == device_id
+    api("PUT", f"/devices/{device_id}", {"name": "updated", "notifications_enabled": False})
+    assert api("GET", f"/users/{user_id}")["users_devices"][0]["id"] == device_id
     data = {"temperature": 22.5, "humidity": 48}
     saved = request("POST", "/telemetry", {
         "device_id": device_id, "data": data
     }, adapter=True, expected=201)
     assert saved["data"] == data
     assert saved["user_id"] == user_id
-    device = request("GET", f"/devices/{device_id}")
+    device = api("GET", f"/devices/{device_id}")
     assert device["telemetry"][0]["data"] == data
     assert device["telemetry"][0]["user_id"] == user_id
     assert device["notifications_enabled"] is False
-    assert isinstance(request("GET", "/devices"), list)
-    assert isinstance(request("GET", "/users"), list)
+    assert [d["id"] for d in api("GET", "/devices")] == [device_id]
+    assert [u["id"] for u in api("GET", "/users")] == [user_id]
     request("POST", "/telemetry/encrypted", {"payload": "AAAA"}, expected=400)
     request("POST", "/telemetry", {}, adapter=True, expected=400)
     # Rule engine: порог, повторные значения, missing/string и флаг устройства.
     rule = {"device_id": device_id, "field": "temperature", "operator": "gt",
             "threshold": 30, "message": "Температура выше 30", "enabled": True}
-    rule_ids.append(request("POST", "/rules", rule, expected=201)["id"])
-    assert len(request("GET", f"/devices/{device_id}/rules")) == 1
+    rule_ids.append(api("POST", "/rules", rule, expected=201)["id"])
+    assert len(api("GET", f"/devices/{device_id}/rules")) == 1
 
-    def telemetry(data, count, owner_id=None):
+    def telemetry(data, count):
         result = request("POST", "/telemetry", {"device_id": device_id, "data": data},
                          adapter=True, expected=201)
         assert result["rules_evaluated"] is True, result
         assert result["notifications_created"] == count, result
         assert result["device_id"] == device_id
-        assert result["user_id"] == (user_id if owner_id is None else owner_id)
+        assert result["user_id"] == user_id
 
     telemetry({"temperature": 35}, 0)  # notifications_enabled=false
-    request("PUT", f"/devices/{device_id}", {
-        "name": "updated", "user_id": user_id, "notifications_enabled": True
+    api("PUT", f"/devices/{device_id}", {
+        "name": "updated", "notifications_enabled": True
     })
     telemetry({"temperature": 20}, 0)
     telemetry({"temperature": 35}, 1)
@@ -84,7 +100,7 @@ try:
     telemetry({"temperature": 40}, 1)
     telemetry({"humidity": 48}, 0)
     telemetry({"temperature": "hot"}, 0)
-    notifications = request("GET", f"/users/{user_id}/notifications")
+    notifications = api("GET", f"/users/{user_id}/notifications")
     assert len(notifications) == 2
     assert notifications[0]["telegram_id"] == stamp
     assert notifications[0]["message"] == rule["message"]
@@ -102,12 +118,12 @@ try:
     assert context["telemetry"]["previous_data"] == {"temperature": 25}
     assert context["occurred_at"]
     rule["enabled"] = False
-    request("PUT", f"/rules/{rule_ids[0]}", rule)
+    api("PUT", f"/rules/{rule_ids[0]}", rule)
     telemetry({"temperature": 20}, 0)
     telemetry({"temperature": 35}, 0)
-    request("POST", "/rules", {**rule, "operator": "invalid"}, expected=400)
+    api("POST", "/rules", {**rule, "operator": "invalid"}, expected=400)
     for operator, field in [("changed", "door"), ("delta", "pressure")]:
-        rule_ids.append(request("POST", "/rules", {
+        rule_ids.append(api("POST", "/rules", {
             "device_id": device_id, "field": field, "operator": operator,
             "threshold": 5, "message": operator
         }, expected=201)["id"])
@@ -115,10 +131,10 @@ try:
     telemetry({"door": True, "pressure": 16}, 2)
     telemetry({"door": True, "pressure": 17}, 0)
     # Снимок события не зависит от текущего имени устройства и настройки правила.
-    request("PUT", f"/devices/{device_id}", {
-        "name": "renamed-after-event", "user_id": user_id, "notifications_enabled": True
+    api("PUT", f"/devices/{device_id}", {
+        "name": "renamed-after-event", "notifications_enabled": True
     })
-    history = request("GET", f"/users/{user_id}/notifications")
+    history = api("GET", f"/users/{user_id}/notifications")
     historical = next(n for n in history if n["id"] == notifications[0]["id"])
     assert historical["context"] == context
     if os.getenv("CHECK_EMAIL") == "1":
@@ -148,31 +164,64 @@ try:
         assert all("ID измерения" in m["HTML"] and "ID владельца" in m["HTML"]
                    and "Условие" in m["HTML"] for m in full_messages)
         print("OK: 4 rule notifications delivered through SMTP; text + HTML verified in Mailpit")
+    other_mail = f"other-{stamp}@example.com"
     other = request("POST", "/users", {
-        "mail": f"other-{stamp}@example.com", "telegram_id": stamp + 1
+        "mail": other_mail, "telegram_id": stamp + 1, "password": password
     }, expected=201)
     other_user_id = other["id"]
-    request("PUT", f"/devices/{device_id}", {
-        "name": "another-owner", "user_id": other_user_id, "notifications_enabled": True
-    })
-    # Старые правила не должны отправляться новому владельцу.
-    telemetry({"door": False, "pressure": 99}, 0, other_user_id)
-    new_rule = request("POST", "/rules", {
-        "device_id": device_id, "field": "temperature", "operator": "gt",
-        "threshold": 30, "message": "Для нового владельца"
-    }, expected=201)
-    rule_ids.append(new_rule["id"])
-    telemetry({"temperature": 35}, 1, other_user_id)
-    new_history = request("GET", f"/users/{other_user_id}/notifications")
-    assert len(new_history) == 1
-    assert new_history[0]["context"]["user"]["id"] == other_user_id
-    assert new_history[0]["context"]["device"]["name"] == "another-owner"
-    assert next(n for n in request("GET", f"/users/{user_id}/notifications")
+    other_session = request("POST", "/auth/login", {"mail": other_mail, "password": password})
+    other_api = partial(request, token=other_session["token"])
+    assert other_api("GET", "/devices") == []
+    assert [u["id"] for u in other_api("GET", "/users")] == [other_user_id]
+    for path in (f"/users/{user_id}", f"/users/{user_id}/notifications",
+                 f"/devices/{device_id}", f"/devices/{device_id}/rules"):
+        other_api("GET", path, expected=404)
+    other_api("PUT", f"/devices/{device_id}", {"name": "another-owner"}, expected=404)
+    other_api("DELETE", f"/devices/{device_id}", expected=404)
+    other_api("POST", "/rules", rule, expected=404)
+    other_api("DELETE", f"/rules/{rule_ids[0]}", expected=404)
+    other_device = other_api("POST", "/devices", {"name": "other", "user_id": user_id}, expected=201)
+    try:
+        assert other_device["user_id"] == other_user_id
+        other_api("PUT", f"/rules/{rule_ids[0]}", {**rule, "device_id": other_device["id"]}, expected=404)
+    finally:
+        other_api("DELETE", f'/devices/{other_device["id"]}', expected=204)
+    assert api("PUT", f"/devices/{device_id}", {
+        "name": "renamed-after-event", "user_id": other_user_id
+    })["user_id"] == user_id
+    assert next(n for n in api("GET", f"/users/{user_id}/notifications")
                 if n["id"] == notifications[0]["id"])["context"] == context
-    print("OK: CRUD, encryption, rule notifications, event snapshots and ownership changes")
+
+    updated_password = "Different integration password"
+    api("PUT", "/auth/password", {
+        "current_password": "wrong", "new_password": updated_password
+    }, expected=403)
+    api("PUT", "/auth/password", {
+        "current_password": password, "new_password": updated_password
+    }, expected=204)
+    api("GET", "/users", expected=401)
+    request("POST", "/auth/login", {"mail": updated_mail, "password": password}, expected=401)
+    credentials = {"mail": updated_mail, "password": updated_password}
+    old_token = request("POST", "/auth/login", credentials)["token"]
+    token = request("POST", "/auth/login", credentials)["token"]
+    api = partial(request, token=token)
+    request("GET", "/users", token=old_token, expected=401)
+    api("POST", "/auth/logout", expected=204)
+    api("GET", "/users", expected=401)
+    api = partial(request, token=request("POST", "/auth/login", credentials)["token"])
+    print("OK: password login, session revocation, owner-only access, telemetry and rules")
 finally:
-    for rule_id in rule_ids:
-        request("DELETE", f"/rules/{rule_id}", expected=204)
+    if api is not None:
+        for rule_id in rule_ids:
+            api("DELETE", f"/rules/{rule_id}", expected=204)
+        if device_id is not None:
+            api("DELETE", f"/devices/{device_id}", expected=204)
+            api("GET", f"/devices/{device_id}", expected=404)
+        if user_id is not None:
+            api("DELETE", f"/users/{user_id}", expected=204)
+            api("GET", f"/users/{user_id}", expected=401)
+    if other_api is not None:
+        other_api("DELETE", f"/users/{other_user_id}", expected=204)
     if user_id is not None:
         # Удаляются только уведомления созданного этим тестом пользователя.
         subprocess.check_call([
@@ -180,16 +229,3 @@ finally:
             "-U", "rules_user", "-d", "iot_rules", "-c",
             f"DELETE FROM notifications WHERE user_id={int(user_id)}"
         ], cwd=ROOT, stdout=subprocess.DEVNULL)
-    if device_id is not None:
-        request("DELETE", f"/devices/{device_id}", expected=204)
-        request("GET", f"/devices/{device_id}", expected=404)
-    if user_id is not None:
-        request("DELETE", f"/users/{user_id}", expected=204)
-        request("GET", f"/users/{user_id}", expected=404)
-    if other_user_id is not None:
-        subprocess.check_call([
-            "docker", "compose", "exec", "-T", "rules-db", "psql",
-            "-U", "rules_user", "-d", "iot_rules", "-c",
-            f"DELETE FROM notifications WHERE user_id={int(other_user_id)}"
-        ], cwd=ROOT, stdout=subprocess.DEVNULL)
-        request("DELETE", f"/users/{other_user_id}", expected=204)

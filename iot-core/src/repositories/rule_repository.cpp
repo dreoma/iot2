@@ -24,8 +24,8 @@ void RuleRepository::save(long long id, long long userId, const Json::Value &rul
     const std::string sql = id == 0
         ? "WITH saved AS (INSERT INTO rules(device_id,user_id,field,operator,threshold,message,enabled) "
           "VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING *) SELECT to_jsonb(saved) AS body FROM saved"
-        : "WITH saved AS (UPDATE rules SET device_id=$1,user_id=$2,field=$3,operator=$4,"
-          "threshold=$5,message=$6,enabled=$7 WHERE id=$8 RETURNING *) "
+        : "WITH saved AS (UPDATE rules SET device_id=$1,field=$3,operator=$4,"
+          "threshold=$5,message=$6,enabled=$7 WHERE id=$8 AND user_id=$2 RETURNING *) "
           "SELECT to_jsonb(saved) AS body FROM saved";
     auto db = app().getDbClient("rules");
     if (id == 0)
@@ -40,17 +40,17 @@ void RuleRepository::save(long long id, long long userId, const Json::Value &rul
             rule["message"].asString(), rule.get("enabled", true).asBool(), id);
 }
 
-void RuleRepository::list(long long deviceId, Success done, Failure fail) const
+void RuleRepository::list(long long deviceId, long long userId, Success done, Failure fail) const
 {
     app().getDbClient("rules")->execSqlAsync(
-        "SELECT to_jsonb(r) AS body FROM rules r WHERE device_id=$1 ORDER BY id",
-        std::move(done), std::move(fail), deviceId);
+        "SELECT to_jsonb(r) AS body FROM rules r WHERE device_id=$1 AND user_id=$2 ORDER BY id",
+        std::move(done), std::move(fail), deviceId, userId);
 }
 
-void RuleRepository::remove(long long id, Success done, Failure fail) const
+void RuleRepository::remove(long long id, long long userId, Success done, Failure fail) const
 {
-    app().getDbClient("rules")->execSqlAsync("DELETE FROM rules WHERE id=$1 RETURNING id",
-        std::move(done), std::move(fail), id);
+    app().getDbClient("rules")->execSqlAsync("DELETE FROM rules WHERE id=$1 AND user_id=$2 RETURNING id",
+        std::move(done), std::move(fail), id, userId);
 }
 
 void RuleRepository::active(long long deviceId, long long userId, Success done, Failure fail) const

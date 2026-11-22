@@ -39,10 +39,12 @@ services:
     volumes:
       - ./iot-core/db/telemetry_context.sql:/migrations/telemetry_context.sql:ro
       - ./iot-core/db/notification_context.sql:/migrations/notification_context.sql:ro
+      - ./iot-core/db/user_auth.sql:/migrations/user_auth.sql:ro
     entrypoint: ["/bin/sh", "-ec"]
     command:
       - |
         PGPASSWORD=iot_password psql -h db -U iot_user -d iot_core -v ON_ERROR_STOP=1 -f /migrations/telemetry_context.sql
+        PGPASSWORD=iot_password psql -h db -U iot_user -d iot_core -v ON_ERROR_STOP=1 -f /migrations/user_auth.sql
         PGPASSWORD=rules_password psql -h rules-db -U rules_user -d iot_rules -v ON_ERROR_STOP=1 -f /migrations/notification_context.sql
 
   iot-core:
@@ -60,6 +62,7 @@ services:
         condition: service_completed_successfully
     env_file: .env
     environment:
+      TRAFFIC_KEY_HEX: ${TRAFFIC_KEY_HEX}
       IOT_SMTP_URL: ${IOT_SMTP_URL-smtp://mailpit:1025}
       IOT_SMTP_FROM: ${IOT_SMTP_FROM:-iot@example.com}
 
@@ -69,7 +72,7 @@ services:
       - "127.0.0.1:8025:8025"
 
   core-tls:
-    image: nginx:1.27-alpine
+    build: ./front
     depends_on:
       - iot-core
     volumes:
@@ -88,7 +91,7 @@ services:
     environment:
       CORE_URL: https://core-tls:8443
       CORE_CA_FILE: /certs/ca.crt
-    env_file: .env
+      TRAFFIC_KEY_HEX: ${TRAFFIC_KEY_HEX}
     volumes:
       - ./certs/ca.crt:/certs/ca.crt:ro
     ports:

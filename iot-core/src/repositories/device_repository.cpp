@@ -43,18 +43,18 @@ void DeviceRepository::create(const std::string &name,
         std::move(onSuccess), std::move(onFailure), name, notificationsEnabled, userId);
 }
 
-void DeviceRepository::findAll(Success onSuccess, Failure onFailure)
+void DeviceRepository::findAll(long long userId, Success onSuccess, Failure onFailure)
 {
     db_->execSqlAsync(std::string(kDevicesWithTelemetry) +
-                          " GROUP BY d.id, ud.user_id ORDER BY d.id",
-                      std::move(onSuccess), std::move(onFailure));
+                          " WHERE ud.user_id = $1 GROUP BY d.id, ud.user_id ORDER BY d.id",
+                      std::move(onSuccess), std::move(onFailure), userId);
 }
 
-void DeviceRepository::findById(long long deviceId, Success onSuccess, Failure onFailure)
+void DeviceRepository::findById(long long deviceId, long long userId, Success onSuccess, Failure onFailure)
 {
     db_->execSqlAsync(std::string(kDevicesWithTelemetry) +
-                          " WHERE d.id = $1 GROUP BY d.id, ud.user_id",
-                      std::move(onSuccess), std::move(onFailure), deviceId);
+                          " WHERE d.id = $1 AND ud.user_id = $2 GROUP BY d.id, ud.user_id",
+                      std::move(onSuccess), std::move(onFailure), deviceId, userId);
 }
 
 void DeviceRepository::update(long long deviceId,
@@ -65,18 +65,15 @@ void DeviceRepository::update(long long deviceId,
                               Failure onFailure)
 {
     db_->execSqlAsync(
-        "WITH updated_device AS ("
-        "  UPDATE devices SET name = $2, notifications_enabled = $3 WHERE id = $1 "
-        "  RETURNING id, name, notifications_enabled"
-        "), updated_owner AS ("
-        "  UPDATE user_devices SET user_id = $4 WHERE device_id = $1 RETURNING user_id, device_id"
-        ") SELECT d.id, d.name, d.notifications_enabled, o.user_id, '[]'::json AS telemetry "
-        "FROM updated_device d JOIN updated_owner o ON o.device_id = d.id",
+        "UPDATE devices d SET name = $2, notifications_enabled = $3 FROM user_devices ud "
+        "WHERE d.id = $1 AND ud.device_id = d.id AND ud.user_id = $4 "
+        "RETURNING d.id, d.name, d.notifications_enabled, ud.user_id, '[]'::json AS telemetry",
         std::move(onSuccess), std::move(onFailure), deviceId, name, notificationsEnabled, userId);
 }
 
-void DeviceRepository::remove(long long deviceId, Success onSuccess, Failure onFailure)
+void DeviceRepository::remove(long long deviceId, long long userId, Success onSuccess, Failure onFailure)
 {
-    db_->execSqlAsync("DELETE FROM devices WHERE id = $1 RETURNING id",
-                      std::move(onSuccess), std::move(onFailure), deviceId);
+    db_->execSqlAsync("DELETE FROM devices d USING user_devices ud "
+                      "WHERE d.id = $1 AND ud.device_id = d.id AND ud.user_id = $2 RETURNING d.id",
+                      std::move(onSuccess), std::move(onFailure), deviceId, userId);
 }

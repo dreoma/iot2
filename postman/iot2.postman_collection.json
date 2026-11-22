@@ -2,7 +2,7 @@
   "info": {
     "name": "IoT2 — ручная проверка",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
-    "description": "Запускайте папку «01 Полный цикл» по порядку, вручную или Runner. ID сохраняются в переменные коллекции. Папка 02 — дополнительные действия; папка 03 удаляет только созданные тестовые сущности. HTTPS certificate verification выключена только для запросов коллекции к локальному проекту. Письма: http://localhost:8025. Не содержит токенов и секретов."
+    "description": "Запускайте папку «01 Полный цикл» по порядку, вручную или Runner. ID и токен сохраняются в переменные коллекции. Папка 02 — дополнительные действия; папка 03 удаляет только созданные тестовые сущности. HTTPS certificate verification выключена только для запросов коллекции к локальному проекту. Письма: http://localhost:8025. Не содержит токенов и секретов."
   },
   "variable": [
     {
@@ -32,6 +32,14 @@
     {
       "key": "iot2_test_telegram",
       "value": ""
+    },
+    {
+      "key": "iot2_test_password",
+      "value": ""
+    },
+    {
+      "key": "iot2_token",
+      "value": ""
     }
   ],
   "item": [
@@ -52,7 +60,7 @@
             "description": "Локальная проверка iot2. Только синтетические тестовые данные.",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"mail\": \"{{iot2_test_mail}}\",\n  \"telegram_id\": {{iot2_test_telegram}}\n}",
+              "raw": "{\n  \"mail\": \"{{iot2_test_mail}}\",\n  \"telegram_id\": {{iot2_test_telegram}},\n  \"password\": \"{{iot2_test_password}}\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -68,7 +76,8 @@
                 "exec": [
                   "const stamp = Date.now();",
                   "pm.collectionVariables.set(\"iot2_test_mail\", \"postman-\" + stamp + \"@example.com\");",
-                  "pm.collectionVariables.set(\"iot2_test_telegram\", 9000000000000 + stamp);"
+                  "pm.collectionVariables.set(\"iot2_test_telegram\", 9000000000000 + stamp);",
+                  "pm.collectionVariables.set(\"iot2_test_password\", pm.variables.replaceIn(\"{{$guid}}\"));"
                 ]
               }
             },
@@ -88,7 +97,7 @@
           }
         },
         {
-          "name": "02 Создать устройство",
+          "name": "Войти и сохранить токен",
           "request": {
             "method": "POST",
             "header": [
@@ -97,11 +106,58 @@
                 "value": "application/json"
               }
             ],
+            "url": "{{iot2_core}}/auth/login",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"mail\": \"{{iot2_test_mail}}\",\n  \"password\": \"{{iot2_test_password}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "if (pm.response.code === 200) {",
+                  "    const session = pm.response.json();",
+                  "    pm.collectionVariables.set(\"iot2_token\", session.token);",
+                  "    pm.collectionVariables.set(\"iot2_user_id\", session.user_id);",
+                  "} else {",
+                  "    pm.collectionVariables.unset(\"iot2_token\");",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "protocolProfileBehavior": {
+            "strictSSL": false
+          }
+        },
+        {
+          "name": "02 Создать устройство",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{iot2_token}}"
+              }
+            ],
             "url": "{{iot2_core}}/devices",
             "description": "Локальная проверка iot2. Только синтетические тестовые данные.",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"Postman IoT2 Sensor\",\n  \"user_id\": {{iot2_user_id}},\n  \"notifications_enabled\": true\n}",
+              "raw": "{\n  \"name\": \"Postman IoT2 Sensor\",\n  \"notifications_enabled\": true\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -133,6 +189,10 @@
               {
                 "key": "Content-Type",
                 "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{iot2_token}}"
               }
             ],
             "url": "{{iot2_core}}/rules",
@@ -287,7 +347,12 @@
           "name": "07 Получить устройство и телеметрию",
           "request": {
             "method": "GET",
-            "header": [],
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{iot2_token}}"
+              }
+            ],
             "url": "{{iot2_core}}/devices/{{iot2_device_id}}",
             "description": "Локальная проверка iot2. Только синтетические тестовые данные."
           },
@@ -311,7 +376,12 @@
           "name": "08 Получить правила устройства",
           "request": {
             "method": "GET",
-            "header": [],
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{iot2_token}}"
+              }
+            ],
             "url": "{{iot2_core}}/devices/{{iot2_device_id}}/rules",
             "description": "Локальная проверка iot2. Только синтетические тестовые данные."
           },
@@ -335,7 +405,12 @@
           "name": "09 Получить уведомления пользователя",
           "request": {
             "method": "GET",
-            "header": [],
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{iot2_token}}"
+              }
+            ],
             "url": "{{iot2_core}}/users/{{iot2_user_id}}/notifications",
             "description": "Локальная проверка iot2. Только синтетические тестовые данные."
           },
@@ -359,7 +434,12 @@
           "name": "10 Получить пользователя с устройствами",
           "request": {
             "method": "GET",
-            "header": [],
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{iot2_token}}"
+              }
+            ],
             "url": "{{iot2_core}}/users/{{iot2_user_id}}",
             "description": "Локальная проверка iot2. Только синтетические тестовые данные."
           },
@@ -408,10 +488,15 @@
       "name": "02 Дополнительные ручные запросы",
       "item": [
         {
-          "name": "Все пользователи",
+          "name": "Мой профиль",
           "request": {
             "method": "GET",
-            "header": [],
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{iot2_token}}"
+              }
+            ],
             "url": "{{iot2_core}}/users",
             "description": "Локальная проверка iot2. Только синтетические тестовые данные."
           },
@@ -431,10 +516,15 @@
           }
         },
         {
-          "name": "Все устройства",
+          "name": "Мои устройства",
           "request": {
             "method": "GET",
-            "header": [],
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{iot2_token}}"
+              }
+            ],
             "url": "{{iot2_core}}/devices",
             "description": "Локальная проверка iot2. Только синтетические тестовые данные."
           },
@@ -461,6 +551,10 @@
               {
                 "key": "Content-Type",
                 "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{iot2_token}}"
               }
             ],
             "url": "{{iot2_core}}/users/{{iot2_user_id}}",
@@ -498,13 +592,17 @@
               {
                 "key": "Content-Type",
                 "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{iot2_token}}"
               }
             ],
             "url": "{{iot2_core}}/devices/{{iot2_device_id}}",
             "description": "Локальная проверка iot2. Только синтетические тестовые данные.",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"Postman IoT2 Sensor\",\n  \"user_id\": {{iot2_user_id}},\n  \"notifications_enabled\": false\n}",
+              "raw": "{\n  \"name\": \"Postman IoT2 Sensor\",\n  \"notifications_enabled\": false\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -535,13 +633,17 @@
               {
                 "key": "Content-Type",
                 "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{iot2_token}}"
               }
             ],
             "url": "{{iot2_core}}/devices/{{iot2_device_id}}",
             "description": "Локальная проверка iot2. Только синтетические тестовые данные.",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"Postman IoT2 Sensor\",\n  \"user_id\": {{iot2_user_id}},\n  \"notifications_enabled\": true\n}",
+              "raw": "{\n  \"name\": \"Postman IoT2 Sensor\",\n  \"notifications_enabled\": true\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -572,6 +674,10 @@
               {
                 "key": "Content-Type",
                 "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{iot2_token}}"
               }
             ],
             "url": "{{iot2_core}}/rules/{{iot2_rule_id}}",
@@ -609,6 +715,10 @@
               {
                 "key": "Content-Type",
                 "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{iot2_token}}"
               }
             ],
             "url": "{{iot2_core}}/rules/{{iot2_rule_id}}",
@@ -727,7 +837,12 @@
           "name": "Удалить тестовое правило",
           "request": {
             "method": "DELETE",
-            "header": [],
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{iot2_token}}"
+              }
+            ],
             "url": "{{iot2_core}}/rules/{{iot2_rule_id}}",
             "description": "Локальная проверка iot2. Только синтетические тестовые данные."
           },
@@ -750,7 +865,12 @@
           "name": "Удалить тестовое устройство",
           "request": {
             "method": "DELETE",
-            "header": [],
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{iot2_token}}"
+              }
+            ],
             "url": "{{iot2_core}}/devices/{{iot2_device_id}}",
             "description": "Локальная проверка iot2. Только синтетические тестовые данные."
           },
@@ -773,7 +893,12 @@
           "name": "Удалить тестового пользователя",
           "request": {
             "method": "DELETE",
-            "header": [],
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{iot2_token}}"
+              }
+            ],
             "url": "{{iot2_core}}/users/{{iot2_user_id}}",
             "description": "Локальная проверка iot2. Только синтетические тестовые данные."
           },
@@ -783,7 +908,8 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test(\"HTTP 204\", () => pm.response.to.have.status(204));"
+                  "pm.test(\"HTTP 204\", () => pm.response.to.have.status(204));",
+                  "if (pm.response.code === 204) pm.collectionVariables.unset(\"iot2_token\");"
                 ]
               }
             }

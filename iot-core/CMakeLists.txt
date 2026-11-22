@@ -10,12 +10,15 @@ find_package(OpenSSL REQUIRED)
 find_package(CURL REQUIRED)
 find_package(Boost REQUIRED COMPONENTS system)
 find_library(TGBOT_LIB TgBot REQUIRED)
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(SODIUM REQUIRED IMPORTED_TARGET libsodium)
 
 add_executable(iot-core
     src/main.cpp
     src/routes/user_routes.cpp
     src/routes/device_routes.cpp
     src/routes/rule_routes.cpp
+    src/services/auth.cpp
     src/repositories/rule_repository.cpp
     src/services/rule_engine.cpp
     src/services/NotificationService.cpp
@@ -29,4 +32,4 @@ add_executable(iot-core
 target_include_directories(iot-core PRIVATE src)
 target_include_directories(iot-core PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../common)
 target_link_libraries(iot-core PRIVATE Drogon::Drogon ${TGBOT_LIB}
-    CURL::libcurl OpenSSL::SSL OpenSSL::Crypto Boost::system)
+    CURL::libcurl OpenSSL::SSL OpenSSL::Crypto Boost::system PkgConfig::SODIUM)

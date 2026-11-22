@@ -31,24 +31,18 @@ UserRepository::UserRepository(DbClientPtr db) : db_(std::move(db))
 
 void UserRepository::create(const std::string &mail,
                             int64_t telegramId,
+                            const std::string &passwordHash,
                             Success onSuccess,
                             Failure onFailure)
 {
     db_->execSqlAsync(
-        "INSERT INTO users (mail, telegram_id) VALUES ($1, $2) "
+        "INSERT INTO users (mail, telegram_id, password_hash) VALUES ($1, $2, $3) "
         "RETURNING id, mail, telegram_id, '[]'::json AS users_devices",
         std::move(onSuccess),
         std::move(onFailure),
         mail,
-        telegramId);
-}
-
-void UserRepository::findAll(Success onSuccess, Failure onFailure)
-{
-    db_->execSqlAsync(std::string(kUsersWithDevices) +
-                          " GROUP BY u.id ORDER BY u.id",
-                      std::move(onSuccess),
-                      std::move(onFailure));
+        telegramId,
+        passwordHash);
 }
 
 void UserRepository::update(long long userId,
@@ -91,4 +85,39 @@ void UserRepository::remove(int64_t userId, Success onSuccess, Failure onFailure
                       std::move(onSuccess),
                       std::move(onFailure),
                       userId);
+}
+
+void UserRepository::credentials(const std::string &mail, Success done, Failure fail)
+{
+    db_->execSqlAsync("SELECT id, password_hash FROM users WHERE mail=$1",
+                     std::move(done), std::move(fail), mail);
+}
+
+void UserRepository::sessionCredentials(const std::string &digest, Success done, Failure fail)
+{
+    db_->execSqlAsync("SELECT password_hash FROM users WHERE session_digest=$1 AND session_expires_at > now()",
+                     std::move(done), std::move(fail), digest);
+}
+
+void UserRepository::saveSession(long long id, const std::string &mail, const std::string &passwordHash,
+                                 const std::string &updatedHash, const std::string &digest, Success done, Failure fail)
+{
+    // Не выдаём сессию, если email или пароль изменились во время проверки.
+    db_->execSqlAsync("UPDATE users SET password_hash=$5, session_digest=$4, session_expires_at=now() + interval '24 hours' "
+                     "WHERE id=$1 AND mail=$2 AND password_hash=$3 RETURNING id",
+                     std::move(done), std::move(fail), id, mail, passwordHash, digest, updatedHash);
+}
+
+void UserRepository::clearSession(const std::string &digest, Success done, Failure fail)
+{
+    db_->execSqlAsync("UPDATE users SET session_digest=NULL, session_expires_at=NULL WHERE session_digest=$1",
+                     std::move(done), std::move(fail), digest);
+}
+
+void UserRepository::changePassword(const std::string &digest, const std::string &oldHash,
+                                    const std::string &newHash, Success done, Failure fail)
+{
+    db_->execSqlAsync("UPDATE users SET password_hash=$3, session_digest=NULL, session_expires_at=NULL "
+                     "WHERE session_digest=$1 AND password_hash=$2 AND session_expires_at > now() RETURNING id",
+                     std::move(done), std::move(fail), digest, oldHash, newHash);
 }

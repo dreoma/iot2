@@ -2,3 +2,5 @@
 .env
 certs
 **/build
+front/node_modules
+front/dist

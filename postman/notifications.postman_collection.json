@@ -2,7 +2,7 @@
   "info": {
     "name": "IoT2 — уведомления Email + Telegram",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
-    "description": "Заполните Variables: notify_mail и notify_chat_id. Токен бота и SMTP задаются в .env сервера, не здесь. Выполняйте папку 01 по порядку. Запрос 05 вызывает отправку в оба настроенных канала. Сервис использует users.mail и users.telegram_id. По умолчанию Email попадает в Mailpit http://localhost:8025; для настоящего почтового ящика нужен внешний SMTP. HTTP 201/история подтверждают срабатывание правила, а не доставку. Текущие личные данные в файл не включены. SSL verification отключена только для этих локальных HTTPS-запросов."
+    "description": "Заполните Variables: notify_mail, notify_chat_id и notify_password. Токен бота и SMTP задаются в .env сервера, не здесь. Для новой учётной записи сначала выполните отдельный запрос регистрации, затем папку 01 по порядку. Запрос 05 вызывает отправку в оба настроенных канала. Сервис использует users.mail и users.telegram_id. По умолчанию Email попадает в Mailpit http://localhost:8025; для настоящего почтового ящика нужен внешний SMTP. HTTP 201/история подтверждают срабатывание правила, а не доставку. Текущие личные данные в файл не включены. SSL verification отключена только для этих локальных HTTPS-запросов."
   },
   "variable": [
     {
@@ -34,6 +34,15 @@
     {
       "key": "notify_rule_id",
       "value": ""
+    },
+    {
+      "key": "notify_password",
+      "value": "",
+      "description": "Пароль учётной записи, заполните локально"
+    },
+    {
+      "key": "notify_token",
+      "value": ""
     }
   ],
   "event": [
@@ -45,7 +54,10 @@
           "const mail = String(pm.collectionVariables.get(\"notify_mail\") || \"\").trim();",
           "const chat = String(pm.collectionVariables.get(\"notify_chat_id\") || \"\").trim();",
           "if (!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(mail)) throw new Error(\"Заполните notify_mail во вкладке Variables коллекции\");",
-          "if (!/^-?\\d+$/.test(chat) || !Number.isSafeInteger(Number(chat)) || Number(chat) === 0) throw new Error(\"Заполните notify_chat_id числовым chat ID из /start у бота\");"
+          "if (!/^-?\\d+$/.test(chat) || !Number.isSafeInteger(Number(chat)) || Number(chat) === 0) throw new Error(\"Заполните notify_chat_id числовым chat ID из /start у бота\");",
+          "const password = String(pm.collectionVariables.get(\"notify_password\") || \"\");",
+          "if (!password) throw new Error(\"Заполните notify_password во вкладке Variables коллекции\");",
+          "pm.variables.set(\"notify_password_json\", JSON.stringify(password));"
         ]
       }
     }
@@ -55,38 +67,7 @@
       "name": "01 Проверка Email + Telegram — по порядку",
       "item": [
         {
-          "name": "00 Найти существующего пользователя по почте и chat ID",
-          "protocolProfileBehavior": {
-            "strictSSL": false
-          },
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": "{{notify_core}}/users"
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
-                  "const users = pm.response.json();",
-                  "const mail = pm.collectionVariables.get(\"notify_mail\");",
-                  "const chat = String(pm.collectionVariables.get(\"notify_chat_id\"));",
-                  "const existing = users.find(u => u.mail === mail && String(u.telegram_id) === chat);",
-                  "pm.collectionVariables.set(\"notify_user_id\", existing ? existing.id : \"\");",
-                  "if (!existing && users.some(u => u.mail === mail || String(u.telegram_id) === chat)) throw new Error(\"Почта или chat ID уже заняты другой комбинацией. Проверьте пользователя через GET /users; чужие данные автоматически не изменяются.\");"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "01 Создать пользователя — пропускается, если уже найден",
-          "protocolProfileBehavior": {
-            "strictSSL": false
-          },
+          "name": "Войти и сохранить токен",
           "request": {
             "method": "POST",
             "header": [
@@ -95,10 +76,10 @@
                 "value": "application/json"
               }
             ],
-            "url": "{{notify_core}}/users",
+            "url": "{{notify_core}}/auth/login",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"mail\": \"{{notify_mail}}\",\n  \"telegram_id\": {{notify_chat_id}}\n}",
+              "raw": "{\n  \"mail\": \"{{notify_mail}}\",\n  \"password\": {{notify_password_json}}\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -108,25 +89,57 @@
           },
           "event": [
             {
-              "listen": "prerequest",
+              "listen": "test",
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "if (pm.collectionVariables.get(\"notify_user_id\")) pm.execution.skipRequest();"
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "if (pm.response.code === 200) {",
+                  "    const session = pm.response.json();",
+                  "    pm.collectionVariables.set(\"notify_token\", session.token);",
+                  "    pm.collectionVariables.set(\"notify_user_id\", session.user_id);",
+                  "} else {",
+                  "    pm.collectionVariables.unset(\"notify_token\");",
+                  "}"
                 ]
               }
-            },
+            }
+          ],
+          "protocolProfileBehavior": {
+            "strictSSL": false
+          }
+        },
+        {
+          "name": "01 Проверить контакты своей учётной записи",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{notify_token}}"
+              }
+            ],
+            "url": "{{notify_core}}/users/{{notify_user_id}}"
+          },
+          "event": [
             {
               "listen": "test",
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test(\"HTTP 201\", () => pm.response.to.have.status(201));",
-                  "pm.collectionVariables.set(\"notify_user_id\", pm.response.json().id);"
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"Контакты совпадают\", () => {",
+                  "    const user = pm.response.json();",
+                  "    pm.expect(user.mail).to.equal(pm.collectionVariables.get(\"notify_mail\"));",
+                  "    pm.expect(String(user.telegram_id)).to.equal(String(pm.collectionVariables.get(\"notify_chat_id\")));",
+                  "});"
                 ]
               }
             }
-          ]
+          ],
+          "protocolProfileBehavior": {
+            "strictSSL": false
+          }
         },
         {
           "name": "02 Создать устройство с уведомлениями",
@@ -139,12 +152,16 @@
               {
                 "key": "Content-Type",
                 "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{notify_token}}"
               }
             ],
             "url": "{{notify_core}}/devices",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"Проверка уведомлений Postman\",\n  \"user_id\": {{notify_user_id}},\n  \"notifications_enabled\": true\n}",
+              "raw": "{\n  \"name\": \"Проверка уведомлений Postman\",\n  \"notifications_enabled\": true\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -176,6 +193,10 @@
               {
                 "key": "Content-Type",
                 "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{notify_token}}"
               }
             ],
             "url": "{{notify_core}}/rules",
@@ -287,7 +308,12 @@
           },
           "request": {
             "method": "GET",
-            "header": [],
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{notify_token}}"
+              }
+            ],
             "url": "{{notify_core}}/users/{{notify_user_id}}/notifications"
           },
           "event": [
@@ -350,7 +376,12 @@
           },
           "request": {
             "method": "GET",
-            "header": [],
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{notify_token}}"
+              }
+            ],
             "url": "{{notify_core}}/devices/{{notify_device_id}}"
           },
           "event": [
@@ -470,6 +501,48 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Регистрация новой учётной записи",
+      "item": [
+        {
+          "name": "Зарегистрировать новую учётную запись",
+          "protocolProfileBehavior": {
+            "strictSSL": false
+          },
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{notify_core}}/users",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"mail\": \"{{notify_mail}}\",\n  \"telegram_id\": {{notify_chat_id}},\n  \"password\": {{notify_password_json}}\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 201\", () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set(\"notify_user_id\", pm.response.json().id);"
                 ]
               }
             }

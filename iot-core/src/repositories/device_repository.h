@@ -17,11 +17,11 @@ class DeviceRepository
 
     void create(const std::string &name, bool notificationsEnabled, long long userId,
                 Success onSuccess, Failure onFailure);
-    void findAll(Success onSuccess, Failure onFailure);
-    void findById(long long deviceId, Success onSuccess, Failure onFailure);
+    void findAll(long long userId, Success onSuccess, Failure onFailure);
+    void findById(long long deviceId, long long userId, Success onSuccess, Failure onFailure);
     void update(long long deviceId, const std::string &name, bool notificationsEnabled,
                 long long userId, Success onSuccess, Failure onFailure);
-    void remove(long long deviceId, Success onSuccess, Failure onFailure);
+    void remove(long long deviceId, long long userId, Success onSuccess, Failure onFailure);
 
   private:
     drogon::orm::DbClientPtr db_;

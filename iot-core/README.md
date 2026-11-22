@@ -8,7 +8,13 @@
 
 ## Сборка сервиса
 
-Установите Drogon (например, через vcpkg), затем:
+Для ручной сборки понадобятся Drogon с PostgreSQL, OpenSSL, libcurl, Boost, TgBot,
+libsodium и pkg-config. Docker установит их автоматически.
+
+Перед запуском примените SQL-миграции из `db/` к соответствующим базам. Для
+основной базы порядок такой: `init.sql` для новой базы, затем `telemetry_context.sql`
+и `user_auth.sql`. Для базы правил: `rules.sql` для новой базы, затем
+`notification_context.sql`. Docker Compose применяет их при запуске.
 
 ```bash
 cmake -S . -B build
@@ -16,54 +22,75 @@ cmake --build build
 ./build/iot-core
 ```
 
-## Маршруты
+## Вход и доступ к API
 
-- `POST /users` — создать пользователя;
-- `GET /users` — получить всех пользователей;
-- `GET /users/{id}` — получить пользователя по идентификатору;
-- `PUT /users/{id}` — изменить пользователя;
-- `DELETE /users/{id}` — удалить пользователя.
+`POST /users` регистрирует пользователя по `mail`, `telegram_id` и `password`.
+Пароль должен занимать от 15 до 256 байт. Сервер сначала вычисляет HMAC-SHA-256
+от пароля с секретом `IOT_PASSWORD_PEPPER_HEX` из `.env`, затем хеширует результат
+с уникальной солью через Argon2id. В PostgreSQL хранится итоговый хеш.
+Пароли, сохранённые без перца, обновляются при первом успешном входе.
+Сохраните перец при переносе или восстановлении базы.
+Ответ регистрации содержит профиль и ID пользователя.
 
-Для устройств доступны аналогичные маршруты: `POST /devices`, `GET /devices`,
-`GET /devices/{id}`, `PUT /devices/{id}`, `DELETE /devices/{id}`.
+`POST /auth/login` принимает `mail` и `password` и возвращает
+`token`, `user_id`, `expires_in`. Email указывается как при регистрации.
+Отправляйте токен в заголовке `Authorization: Bearer <token>` по HTTPS.
+Сессия действует 24 часа. Повторный вход заменяет текущую сессию.
 
-Маршруты находятся в `src/routes/user_routes.cpp`, а все обращения к БД — в
-`src/repositories/user_repository.cpp`. Для добавления нового маршрута сначала
-добавьте метод в репозиторий, затем зарегистрируйте HTTP-обработчик в routes.
+| Маршрут | Действие |
+| --- | --- |
+| `GET /users` | Вернуть массив с собственным профилем |
+| `GET /users/{id}`, `PUT /users/{id}`, `DELETE /users/{id}` | Прочитать, обновить или удалить свой профиль |
+| `POST /devices`, `GET /devices` | Создать устройство для себя или получить список своих устройств |
+| `GET /devices/{id}`, `PUT /devices/{id}`, `DELETE /devices/{id}` | Прочитать, обновить или удалить своё устройство |
+| `POST /auth/logout` | Завершить текущую сессию |
+| `PUT /auth/password` | Изменить пароль с полями `current_password` и `new_password`. После смены нужно войти заново |
 
-## Создание пользователя
+API определяет владельца устройства по сессии. Для правил и истории уведомлений
+тоже нужен токен владельца. Без действующей сессии ответ будет `401`, для чужого
+ресурса — `404`. Маршрут приёма телеметрии использует ключ обмена с адаптером.
 
-```bash
-curl -X POST http://127.0.0.1:8080/users \
-  -H 'Content-Type: application/json' \
-  -d '{"mail": "user@example.com", "telegram_id": 123456789}'
-```
-
-Успешный ответ: `201 Created`. Повторяющийся `telegram_id` или `mail`: `409 Conflict`.
-
-## Примеры GET-запросов
-
-```bash
-curl http://127.0.0.1:8080/users
-curl http://127.0.0.1:8080/users/1
-curl -X PUT http://127.0.0.1:8080/users/1 \
-  -H 'Content-Type: application/json' \
-  -d '{"mail":"new@example.com","telegram_id":987654321}'
-curl -X DELETE http://127.0.0.1:8080/users/1
-```
-
-## Примеры устройств
+Пример для локального Docker Compose. Пароль в примере тестовый.
 
 ```bash
-curl -X POST http://127.0.0.1:8080/devices \
+core() {
+  curl --noproxy '*' --cacert certs/ca.crt --resolve core-tls:8443:127.0.0.1 "$@"
+}
+
+core https://core-tls:8443/users -H 'Content-Type: application/json' \
+  -d '{"mail":"user@example.com","telegram_id":123456789,"password":"Example login password"}'
+
+core https://core-tls:8443/auth/login -H 'Content-Type: application/json' \
+  -d '{"mail":"user@example.com","password":"Example login password"}'
+
+# Подставьте token из ответа входа.
+core https://core-tls:8443/devices -H 'Authorization: Bearer <token>' \
   -H 'Content-Type: application/json' \
-  -d '{"name":"esp32-office","user_id":1,"notifications_enabled":true}'
-
-curl http://127.0.0.1:8080/devices/1
-
-curl -X PUT http://127.0.0.1:8080/devices/1 \
-  -H 'Content-Type: application/json' \
-  -d '{"name":"esp32-home","user_id":1,"notifications_enabled":false}'
-
-curl -X DELETE http://127.0.0.1:8080/devices/1
+  -d '{"name":"esp32","notifications_enabled":true}'
 ```
+
+## Пароли для существующих пользователей
+
+Миграция `user_auth.sql` сохраняет пользователей, устройства и историю. Старые
+учётные записи получают доступ после установки пароля оператором. Для каждой
+такой записи получите Argon2id-хеш пароля через стандартный ввод в Bash:
+
+```bash
+read -r -s -p 'Password: ' IOT_EXISTING_PASSWORD
+printf '\n'
+printf '%s\n' "$IOT_EXISTING_PASSWORD" | docker compose exec -T iot-core ./iot-core --hash-password
+unset IOT_EXISTING_PASSWORD
+```
+
+Выполните в `docker compose exec db psql -U iot_user -d iot_core`. Укажите
+ID и сохраните полученный хеш одним запросом:
+
+```sql
+\prompt 'User ID: ' target_user_id
+\prompt 'Argon2id hash: ' target_hash
+UPDATE users SET password_hash = :'target_hash'
+WHERE id = :'target_user_id'::bigint AND password_hash IS NULL;
+```
+
+`UPDATE 1` означает, что пароль установлен. Передайте пароль пользователю через
+приватный канал. После первого входа пользователь может сменить его.
