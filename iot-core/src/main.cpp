@@ -4,6 +4,7 @@
 #include "notifications/EmailNotifier.h"
 #include "services/NotificationService.h"
 #include "services/auth.h"
+#include "repositories/user_repository.h"
 #include <cstdlib>
 #include <iostream>
 #include <string_view>
@@ -39,16 +40,27 @@ int main(int argc, char **argv)
         return value ? value : fallback;
     };
     std::vector<std::unique_ptr<INotifier>> notifiers;
-    if (auto token = env("IOT_TELEGRAM_BOT_TOKEN"); !token.empty())
-        notifiers.push_back(std::make_unique<TelegramNotifier>(token));
+    TelegramNotifier *telegram = nullptr;
+    if (auto token = env("IOT_TELEGRAM_BOT_TOKEN"); !token.empty()) {
+        auto notifier = std::make_unique<TelegramNotifier>(
+            std::move(token), env("IOT_TELEGRAM_API_URL", "https://api.telegram.org"));
+        telegram = notifier.get();
+        notifiers.push_back(std::move(notifier));
+    }
     if (auto url = env("IOT_SMTP_URL"); !url.empty())
         notifiers.push_back(std::make_unique<EmailNotifier>(SmtpConfig{
             url, env("IOT_SMTP_USER"), env("IOT_SMTP_PASSWORD"), env("IOT_SMTP_FROM", "iot@example.com")}));
     // Один сервис с обоими каналами — без дублирования бота из исходного main.cc.
     auto notifications = std::make_shared<NotificationService>(std::move(notifiers));
     drogon::app().loadConfigFile("config.json");
-    registerUserRoutes();
+    if (telegram)
+        drogon::app().registerBeginningAdvice([telegram] {
+            telegram->start(std::make_shared<UserRepository>(drogon::app().getDbClient("postgres")));
+        });
+    registerUserRoutes([telegram] { return telegram ? telegram->username() : std::string{}; });
     registerDeviceRoutes(notifications);
     registerRuleRoutes();
     drogon::app().run();
+    if (telegram)
+        telegram->stop();
 }

@@ -4,6 +4,8 @@
 #include "repositories/user_repository.h"
 #include "services/auth.h"
 
+#include <algorithm>
+
 using namespace drogon;
 using namespace drogon::orm;
 
@@ -20,10 +22,15 @@ bool validMail(const Json::Value &value)
     return !mail.empty() && mail.size() <= 255 && mail.find('\0') == std::string::npos;
 }
 
-bool validProfile(const std::shared_ptr<Json::Value> &body)
+bool validEmail(const Json::Value &value)
 {
-    return body && body->isObject() && validMail((*body)["mail"]) &&
-           (*body)["telegram_id"].isInt64();
+    if (!validMail(value))
+        return false;
+    const auto mail = value.asString();
+    const auto at = mail.find('@');
+    return at != std::string::npos && at > 0 && at + 1 < mail.size() &&
+           mail.find('@', at + 1) == std::string::npos &&
+           std::none_of(mail.begin(), mail.end(), [](unsigned char ch) { return ch <= ' ' || ch == 127; });
 }
 
 auto databaseError(const Callback &done)
@@ -34,7 +41,7 @@ auto databaseError(const Callback &done)
 auto profileWriteError(const Callback &done)
 {
     return [done](const DrogonDbException &) {
-        error(done, k409Conflict, "could not save user; mail or telegram_id may already exist");
+        error(done, k409Conflict, "could not save user; mail may already exist");
     };
 }
 
@@ -61,6 +68,81 @@ void sendProfile(const Result &rows, const Callback &done, bool array = false)
         return;
     }
     done(HttpResponse::newHttpJsonResponse(profile));
+}
+
+void startRegistration(const std::shared_ptr<UserRepository> &repository, const HttpRequestPtr &request,
+                       const Callback &done, const std::string &telegramUsername)
+{
+    const auto body = request->getJsonObject();
+    if (!body || !body->isObject() || body->size() != 1 || !validEmail((*body)["mail"]))
+        return error(done, k400BadRequest, "mail is required");
+    if (telegramUsername.empty())
+        return error(done, k503ServiceUnavailable, "telegram registration unavailable");
+
+    const auto token = auth::newToken();
+    const auto telegramToken = auth::newToken();
+    const auto link = "https://t.me/" + telegramUsername + "?start=" + telegramToken;
+    repository->startRegistration((*body)["mail"].asString(), auth::digest(token), auth::digest(telegramToken),
+        [done, token, link](const Result &rows) {
+            if (rows.empty())
+                return error(done, k409Conflict, "mail is already registered");
+            Json::Value result;
+            result["registration_token"] = token;
+            result["telegram_url"] = link;
+            result["expires_in"] = 600;
+            auto response = HttpResponse::newHttpJsonResponse(result);
+            response->setStatusCode(k201Created);
+            response->addHeader("Cache-Control", "no-store");
+            done(response);
+        }, databaseError(done));
+}
+
+void registrationStatus(const std::shared_ptr<UserRepository> &repository, const HttpRequestPtr &request,
+                        const Callback &done)
+{
+    const auto digest = auth::tokenDigest(request);
+    if (digest.empty())
+        return error(done, k401Unauthorized, "registration token required");
+    repository->registrationStatus(digest, [done](const Result &rows) {
+        if (rows.empty())
+            return error(done, k404NotFound, "registration expired or not found");
+        Json::Value result;
+        result["telegram_confirmed"] = rows[0]["confirmed"].as<bool>();
+        auto response = HttpResponse::newHttpJsonResponse(result);
+        response->addHeader("Cache-Control", "no-store");
+        done(response);
+    }, databaseError(done));
+}
+
+void finishRegistration(const std::shared_ptr<UserRepository> &repository, const HttpRequestPtr &request,
+                        const Callback &done)
+{
+    const auto body = request->getJsonObject();
+    if (!body || !body->isObject() || body->size() != 1 || !auth::validNewPassword((*body)["password"]))
+        return error(done, k400BadRequest, "password (15 to 256 bytes) is required");
+    const auto digest = auth::tokenDigest(request);
+    if (digest.empty())
+        return error(done, k401Unauthorized, "registration token required");
+
+    repository->registrationStatus(digest, [repository, done, digest, password = (*body)["password"].asString()]
+                                  (const Result &rows) {
+        if (rows.empty())
+            return error(done, k404NotFound, "registration expired or not found");
+        if (!rows[0]["confirmed"].as<bool>())
+            return error(done, k409Conflict, "confirm telegram first");
+        auth::passwordTask(done, [repository, done, digest, password] {
+            const auto hash = auth::hashPassword(password);
+            if (hash.empty())
+                return error(done, k503ServiceUnavailable, "password hashing unavailable");
+            repository->finishRegistration(digest, hash, [done](const Result &created) {
+                if (created.empty())
+                    return error(done, k409Conflict, "registration expired or mail or telegram already registered");
+                auto response = HttpResponse::newHttpJsonResponse(userToJson(created[0]));
+                response->setStatusCode(k201Created);
+                done(response);
+            }, databaseError(done));
+        });
+    }, databaseError(done));
 }
 
 void login(const std::shared_ptr<UserRepository> &repository, const HttpRequestPtr &request, const Callback &done)
@@ -150,33 +232,20 @@ void changePassword(const std::shared_ptr<UserRepository> &repository,
 }
 }  // namespace
 
-void registerUserRoutes()
+void registerUserRoutes(std::function<std::string()> telegramUsername)
 {
     auto repository = std::make_shared<UserRepository>(nullptr);
     app().registerBeginningAdvice([repository] { repository->setDb(app().getDbClient("postgres")); });
 
+    app().registerHandler("/auth/register/start",
+        [repository, telegramUsername = std::move(telegramUsername)](const HttpRequestPtr &request, Callback &&done) {
+            startRegistration(repository, request, done, telegramUsername());
+        }, {Post});
+    app().registerHandler("/auth/register/status", [repository](const HttpRequestPtr &request, Callback &&done) {
+        registrationStatus(repository, request, done);
+    }, {Get});
     app().registerHandler("/users", [repository](const HttpRequestPtr &request, Callback &&done) {
-        const auto body = request->getJsonObject();
-        if (!validProfile(body) || !auth::validNewPassword((*body)["password"]))
-        {
-            error(done, k400BadRequest, "mail, telegram_id and password (15 to 256 bytes) are required");
-            return;
-        }
-        auth::passwordTask(done, [repository, done, mail = (*body)["mail"].asString(),
-                                  telegramId = (*body)["telegram_id"].asInt64(),
-                                  password = (*body)["password"].asString()] {
-            const auto hash = auth::hashPassword(password);
-            if (hash.empty())
-            {
-                error(done, k503ServiceUnavailable, "password hashing unavailable");
-                return;
-            }
-            repository->create(mail, telegramId, hash, [done](const Result &rows) {
-                auto response = HttpResponse::newHttpJsonResponse(userToJson(rows[0]));
-                response->setStatusCode(k201Created);
-                done(response);
-            }, profileWriteError(done));
-        });
+        finishRegistration(repository, request, done);
     }, {Post});
 
     app().registerHandler("/auth/login", [repository](const HttpRequestPtr &request, Callback &&done) {
@@ -207,9 +276,9 @@ void registerUserRoutes()
         if (id != auth::userId(request))
             return error(done, k404NotFound, "user not found");
         const auto body = request->getJsonObject();
-        if (!validProfile(body) || body->isMember("password"))
-            return error(done, k400BadRequest, "mail and telegram_id are required; use /auth/password to change password");
-        repository->update(id, (*body)["mail"].asString(), (*body)["telegram_id"].asInt64(),
+        if (!body || !body->isObject() || body->size() != 1 || !validEmail((*body)["mail"]))
+            return error(done, k400BadRequest, "only mail can be updated here");
+        repository->update(id, (*body)["mail"].asString(),
                            [done](const Result &rows) { sendProfile(rows, done); }, profileWriteError(done));
     }, {Put, "UserAuthFilter"});
 

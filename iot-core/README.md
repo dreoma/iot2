@@ -12,8 +12,8 @@
 libsodium и pkg-config. Docker установит их автоматически.
 
 Перед запуском примените SQL-миграции из `db/` к соответствующим базам. Для
-основной базы порядок такой: `init.sql` для новой базы, затем `telemetry_context.sql`
-и `user_auth.sql`. Для базы правил: `rules.sql` для новой базы, затем
+основной базы порядок такой: `init.sql` для новой базы, затем `telemetry_context.sql`,
+`user_auth.sql` и `telegram_registration.sql`. Для базы правил: `rules.sql` для новой базы, затем
 `notification_context.sql`. Docker Compose применяет их при запуске.
 
 ```bash
@@ -24,13 +24,30 @@ cmake --build build
 
 ## Вход и доступ к API
 
-`POST /users` регистрирует пользователя по `mail`, `telegram_id` и `password`.
+Для регистрации задайте `IOT_TELEGRAM_BOT_TOKEN` в `.env`. Ядро получает имя бота
+от Telegram. При недоступности бота старт регистрации возвращает `503`.
+
+1. `POST /auth/register/start` принимает `mail` и возвращает `201` с полями
+   `registration_token`, `telegram_url` и `expires_in` (600 секунд).
+2. Пользователь открывает `telegram_url` и нажимает «Старт» в личном чате.
+   Бот связывает Telegram ID отправителя с начатой регистрацией. Клиент
+   проверяет `GET /auth/register/status` с `Authorization: Bearer <registration_token>`.
+   Ответ содержит `telegram_confirmed`.
+3. После подтверждения `POST /users` принимает только `password` и тот же
+   регистрационный токен в заголовке. Ответ `201` содержит профиль и ID
+   пользователя. Токен регистрации используется один раз. Для входа после
+   регистрации вызовите обычный `POST /auth/login`.
+
+Ссылка бота и токен регистрации содержат разные случайные значения. PostgreSQL
+временно хранит их SHA-256 в `pending_registrations`. Завершить регистрацию
+можно только в течение 10 минут. Ручной ввод Telegram ID отсутствует и
+в регистрации, и при изменении профиля.
+
 Пароль должен занимать от 15 до 256 байт. Сервер сначала вычисляет HMAC-SHA-256
 от пароля с секретом `IOT_PASSWORD_PEPPER_HEX` из `.env`, затем хеширует результат
 с уникальной солью через Argon2id. В PostgreSQL хранится итоговый хеш.
 Пароли, сохранённые без перца, обновляются при первом успешном входе.
 Сохраните перец при переносе или восстановлении базы.
-Ответ регистрации содержит профиль и ID пользователя.
 
 `POST /auth/login` принимает `mail` и `password` и возвращает
 `token`, `user_id`, `expires_in`. Email указывается как при регистрации.
@@ -40,7 +57,7 @@ cmake --build build
 | Маршрут | Действие |
 | --- | --- |
 | `GET /users` | Вернуть массив с собственным профилем |
-| `GET /users/{id}`, `PUT /users/{id}`, `DELETE /users/{id}` | Прочитать, обновить или удалить свой профиль |
+| `GET /users/{id}`, `PUT /users/{id}`, `DELETE /users/{id}` | Прочитать свой профиль, изменить его email (поле `mail`) или удалить профиль |
 | `POST /devices`, `GET /devices` | Создать устройство для себя или получить список своих устройств |
 | `GET /devices/{id}`, `PUT /devices/{id}`, `DELETE /devices/{id}` | Прочитать, обновить или удалить своё устройство |
 | `POST /auth/logout` | Завершить текущую сессию |
@@ -57,8 +74,14 @@ core() {
   curl --noproxy '*' --cacert certs/ca.crt --resolve core-tls:8443:127.0.0.1 "$@"
 }
 
-core https://core-tls:8443/users -H 'Content-Type: application/json' \
-  -d '{"mail":"user@example.com","telegram_id":123456789,"password":"Example login password"}'
+core https://core-tls:8443/auth/register/start -H 'Content-Type: application/json' \
+  -d '{"mail":"user@example.com"}'
+
+# Сохраните registration_token в REG_TOKEN, откройте telegram_url и нажмите «Старт».
+core https://core-tls:8443/auth/register/status -H "Authorization: Bearer $REG_TOKEN"
+# После telegram_confirmed: true задайте пароль.
+core https://core-tls:8443/users -H "Authorization: Bearer $REG_TOKEN" \
+  -H 'Content-Type: application/json' -d '{"password":"Example login password"}'
 
 core https://core-tls:8443/auth/login -H 'Content-Type: application/json' \
   -d '{"mail":"user@example.com","password":"Example login password"}'

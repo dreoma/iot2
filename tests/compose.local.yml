@@ -1,6 +1,23 @@
-# Проверки доставки используют только локальную почту, без реального Telegram.
+# Тестовый стенд слушает только loopback и использует отдельные порты.
 services:
+  core-tls:
+    ports: !override ["127.0.0.1:18443:8443"]
+  http-adapter:
+    ports: !override ["127.0.0.1:18081:8081"]
+  mailpit:
+    ports: !override ["127.0.0.1:18025:8025"]
   iot-core:
+    depends_on:
+      telegram-test:
+        condition: service_started
     environment:
-      IOT_TELEGRAM_BOT_TOKEN: ""
+      IOT_TELEGRAM_BOT_TOKEN: "456789:test-token"
+      IOT_TELEGRAM_API_URL: "http://telegram-test:8085"
       IOT_SMTP_URL: smtp://mailpit:1025
+  telegram-test:
+    image: python:3.12-alpine
+    command: ["python3", "/test/telegram_mock.py"]
+    volumes:
+      - ./tests/telegram_mock.py:/test/telegram_mock.py:ro
+    ports:
+      - "127.0.0.1:18085:8085"

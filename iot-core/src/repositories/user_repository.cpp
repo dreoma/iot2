@@ -29,31 +29,61 @@ UserRepository::UserRepository(DbClientPtr db) : db_(std::move(db))
 {
 }
 
-void UserRepository::create(const std::string &mail,
-                            int64_t telegramId,
-                            const std::string &passwordHash,
-                            Success onSuccess,
-                            Failure onFailure)
+void UserRepository::startRegistration(const std::string &mail, const std::string &registrationDigest,
+                                       const std::string &telegramDigest, Success done, Failure fail)
 {
-    db_->execSqlAsync(
-        "INSERT INTO users (mail, telegram_id, password_hash) VALUES ($1, $2, $3) "
-        "RETURNING id, mail, telegram_id, '[]'::json AS users_devices",
-        std::move(onSuccess),
-        std::move(onFailure),
-        mail,
-        telegramId,
-        passwordHash);
+    db_->execSqlAsync(R"SQL(
+        WITH expired AS (DELETE FROM pending_registrations WHERE expires_at <= now())
+        INSERT INTO pending_registrations (mail, registration_digest, telegram_digest)
+        SELECT $1::text, $2, $3 WHERE NOT EXISTS (SELECT 1 FROM users WHERE mail = $1)
+        RETURNING registration_digest
+    )SQL", std::move(done), std::move(fail), mail, registrationDigest, telegramDigest);
+}
+
+void UserRepository::registrationStatus(const std::string &registrationDigest, Success done, Failure fail)
+{
+    db_->execSqlAsync("SELECT telegram_id IS NOT NULL AS confirmed FROM pending_registrations "
+                     "WHERE registration_digest=$1 AND expires_at > now()",
+                     std::move(done), std::move(fail), registrationDigest);
+}
+
+bool UserRepository::confirmRegistration(const std::string &telegramDigest, int64_t telegramId)
+{
+    // Вызывается только из потока Telegram, поэтому не блокирует HTTP-обработчики.
+    return !db_->execSqlSync(R"SQL(
+        UPDATE pending_registrations SET telegram_id=$2
+        WHERE telegram_digest=$1 AND expires_at > now()
+            AND (telegram_id IS NULL OR telegram_id=$2)
+            AND NOT EXISTS (SELECT 1 FROM users WHERE telegram_id=$2)
+        RETURNING telegram_id
+    )SQL", telegramDigest, telegramId).empty();
+}
+
+void UserRepository::finishRegistration(const std::string &registrationDigest, const std::string &passwordHash,
+                                        Success done, Failure fail)
+{
+    // Токен можно использовать один раз. Конфликт email или Telegram проверяет сама таблица users.
+    db_->execSqlAsync(R"SQL(
+        WITH confirmed AS (
+            DELETE FROM pending_registrations
+            WHERE registration_digest=$1 AND telegram_id IS NOT NULL AND expires_at > now()
+            RETURNING mail, telegram_id
+        )
+        INSERT INTO users (mail, telegram_id, password_hash)
+        SELECT mail, telegram_id, $2 FROM confirmed
+        ON CONFLICT DO NOTHING
+        RETURNING id, mail, telegram_id, '[]'::json AS users_devices
+    )SQL", std::move(done), std::move(fail), registrationDigest, passwordHash);
 }
 
 void UserRepository::update(long long userId,
                             const std::string &mail,
-                            int64_t telegramId,
                             Success onSuccess,
                             Failure onFailure)
 {
     db_->execSqlAsync(
         "WITH updated_user AS ("
-        "  UPDATE users SET mail = $2, telegram_id = $3 WHERE id = $1 "
+        "  UPDATE users SET mail = $2 WHERE id = $1 "
         "  RETURNING id, mail, telegram_id"
         ") SELECT u.id, u.mail, u.telegram_id, "
         "COALESCE(json_agg(json_build_object('id', d.id, 'name', d.name, "
@@ -66,8 +96,7 @@ void UserRepository::update(long long userId,
         std::move(onSuccess),
         std::move(onFailure),
         userId,
-        mail,
-        telegramId);
+        mail);
 }
 
 void UserRepository::findById(int64_t userId, Success onSuccess, Failure onFailure)

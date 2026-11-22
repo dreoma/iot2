@@ -1,4 +1,7 @@
 #pragma once
 
+#include <functional>
+#include <string>
+
 // Регистрирует все маршруты, связанные с пользователями.
-void registerUserRoutes();
+void registerUserRoutes(std::function<std::string()> telegramUsername);

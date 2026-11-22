@@ -101,6 +101,11 @@ std::string digest(const std::string &token)
     return sodium_bin2hex(hex, sizeof(hex), hash, sizeof(hash));
 }
 
+bool isToken(std::string_view value)
+{
+    return value.size() == 64 && value.find_first_not_of("0123456789abcdef") == std::string_view::npos;
+}
+
 std::string tokenDigest(const HttpRequestPtr &request)
 {
     const auto &header = request->getHeader("Authorization");
@@ -113,7 +118,7 @@ std::string tokenDigest(const HttpRequestPtr &request)
         }))
         return {};
     const auto token = header.substr(scheme.size());
-    if (token.find_first_not_of("0123456789abcdef") != std::string::npos)
+    if (!isToken(token))
         return {};
     return digest(token);
 }

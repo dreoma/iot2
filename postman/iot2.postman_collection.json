@@ -2,7 +2,7 @@
   "info": {
     "name": "IoT2 — ручная проверка",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
-    "description": "Запускайте папку «01 Полный цикл» по порядку, вручную или Runner. ID и токен сохраняются в переменные коллекции. Папка 02 — дополнительные действия; папка 03 удаляет только созданные тестовые сущности. HTTPS certificate verification выключена только для запросов коллекции к локальному проекту. Письма: http://localhost:8025. Не содержит токенов и секретов."
+    "description": "Выполняйте папку 01 вручную: после первого запроса откройте telegram_url и подтвердите Telegram в боте. Затем проверьте подтверждение, задайте пароль и войдите. ID и токен сохраняются в локальных переменных. Папка 02 содержит дополнительные действия, папка 03 удаляет только тестовые сущности. HTTPS certificate verification отключена для локальных запросов."
   },
   "variable": [
     {
@@ -30,15 +30,15 @@
       "value": ""
     },
     {
-      "key": "iot2_test_telegram",
-      "value": ""
-    },
-    {
       "key": "iot2_test_password",
       "value": ""
     },
     {
       "key": "iot2_token",
+      "value": ""
+    },
+    {
+      "key": "iot2_registration_token",
       "value": ""
     }
   ],
@@ -47,7 +47,7 @@
       "name": "01 Полный цикл — выполнить по порядку",
       "item": [
         {
-          "name": "01 Создать тестового пользователя",
+          "name": "01 Ввести почту и получить ссылку",
           "request": {
             "method": "POST",
             "header": [
@@ -56,11 +56,11 @@
                 "value": "application/json"
               }
             ],
-            "url": "{{iot2_core}}/users",
-            "description": "Локальная проверка iot2. Только синтетические тестовые данные.",
+            "url": "{{iot2_core}}/auth/register/start",
+            "description": "После ответа откройте значение telegram_url в Telegram и нажмите «Старт».",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"mail\": \"{{iot2_test_mail}}\",\n  \"telegram_id\": {{iot2_test_telegram}},\n  \"password\": \"{{iot2_test_password}}\"\n}",
+              "raw": "{\n  \"mail\": \"{{iot2_test_mail}}\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -76,7 +76,6 @@
                 "exec": [
                   "const stamp = Date.now();",
                   "pm.collectionVariables.set(\"iot2_test_mail\", \"postman-\" + stamp + \"@example.com\");",
-                  "pm.collectionVariables.set(\"iot2_test_telegram\", 9000000000000 + stamp);",
                   "pm.collectionVariables.set(\"iot2_test_password\", pm.variables.replaceIn(\"{{$guid}}\"));"
                 ]
               }
@@ -87,7 +86,81 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test(\"HTTP 201\", () => pm.response.to.have.status(201));",
-                  "pm.collectionVariables.set(\"iot2_user_id\", pm.response.json().id);"
+                  "if (pm.response.code === 201) pm.collectionVariables.set(\"iot2_registration_token\", pm.response.json().registration_token);"
+                ]
+              }
+            }
+          ],
+          "protocolProfileBehavior": {
+            "strictSSL": false
+          }
+        },
+        {
+          "name": "02 Проверить подтверждение Telegram",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{iot2_registration_token}}"
+              }
+            ],
+            "url": "{{iot2_core}}/auth/register/status",
+            "description": "Выполните после нажатия «Старт» в личном чате. Дождитесь telegram_confirmed: true."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"Telegram подтверждён\", () => pm.expect(pm.response.json().telegram_confirmed).to.be.true);"
+                ]
+              }
+            }
+          ],
+          "protocolProfileBehavior": {
+            "strictSSL": false
+          }
+        },
+        {
+          "name": "03 Задать пароль",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{iot2_registration_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{iot2_core}}/users",
+            "description": "Завершите регистрацию до истечения срока ссылки.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"password\": \"{{iot2_test_password}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 201\", () => pm.response.to.have.status(201));",
+                  "if (pm.response.code === 201) {",
+                  "  pm.collectionVariables.set(\"iot2_user_id\", pm.response.json().id);",
+                  "  pm.collectionVariables.unset(\"iot2_registration_token\");",
+                  "}"
                 ]
               }
             }
@@ -561,7 +634,7 @@
             "description": "Локальная проверка iot2. Только синтетические тестовые данные.",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"mail\": \"{{iot2_test_mail}}\",\n  \"telegram_id\": {{iot2_test_telegram}}\n}",
+              "raw": "{\n  \"mail\": \"{{iot2_test_mail}}\"\n}",
               "options": {
                 "raw": {
                   "language": "json"

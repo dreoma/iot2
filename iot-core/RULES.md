@@ -86,8 +86,9 @@ curl --noproxy '*' --cacert certs/ca.crt --resolve core-tls:8443:127.0.0.1 \
 дополнена текстом правила, именем поля и предыдущим/новым значениями.
 
 В отличие от исходного main.cc, здесь создаётся один `NotificationService` с обоими
-каналами. Telegram создаётся только при непустом `IOT_TELEGRAM_BOT_TOKEN`. Полученный
-по `/start` chat ID нужно записать в `users.telegram_id`. В iot2 нет отдельного
+каналами. Telegram создаётся только при непустом `IOT_TELEGRAM_BOT_TOKEN`.
+После подтверждения в личном чате бот привязывает Telegram ID во время регистрации.
+Уведомления используют сохранённый `users.telegram_id`. В iot2 нет отдельного
 имени пользователя и sensor_id: в сообщениях используются mail и id устройства.
 
 Очередь отправки, как в исходной ветке, находится в памяти. Неуспешная отправка
@@ -116,25 +117,8 @@ IOT_SMTP_PASSWORD=
 
 ## Запуск и проверка
 
-Из корня `iot2`:
-
-```bash
-docker compose up --build -d
-python3 tests/integration.py
-# Дополнительно проверить реальную SMTP-доставку в локальный Mailpit:
-CHECK_EMAIL=1 python3 tests/integration.py
-```
-
-Чтобы при тестах не отправлять сообщения реальному боту/SMTP, временно запустите
-ядро с локальным override, затем верните обычную конфигурацию:
-
-```bash
-docker compose -f docker-compose.yml -f tests/compose.local.yml up -d --no-build
-docker compose restart core-tls
-CHECK_EMAIL=1 python3 tests/integration.py
-docker compose up -d --no-build
-docker compose restart core-tls
-```
+Используйте [локальный тестовый стенд](../LOCAL_SETUP.md#8-проверить-тестами-без-реальных-рассылок).
+Он отправляет запросы Telegram в заглушку и направляет письма в Mailpit.
 
 Тест проверяет CRUD, шифрованную телеметрию, пороговые переходы, `changed`, `delta`,
 отключение уведомлений и некорректные правила. Созданные им записи удаляются.

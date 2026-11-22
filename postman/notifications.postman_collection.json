@@ -2,18 +2,13 @@
   "info": {
     "name": "IoT2 — уведомления Email + Telegram",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
-    "description": "Заполните Variables: notify_mail, notify_chat_id и notify_password. Токен бота и SMTP задаются в .env сервера, не здесь. Для новой учётной записи сначала выполните отдельный запрос регистрации, затем папку 01 по порядку. Запрос 05 вызывает отправку в оба настроенных канала. Сервис использует users.mail и users.telegram_id. По умолчанию Email попадает в Mailpit http://localhost:8025; для настоящего почтового ящика нужен внешний SMTP. HTTP 201/история подтверждают срабатывание правила, а не доставку. Текущие личные данные в файл не включены. SSL verification отключена только для этих локальных HTTPS-запросов."
+    "description": "Заполните Variables: notify_mail и notify_password. Для нового аккаунта выполните папку регистрации и подтвердите Telegram по ссылке из ответа. Затем выполните папку 01. Правила отправляют сообщения на привязанный Telegram и почту. По умолчанию почта попадает в Mailpit. SSL verification отключена для локальных HTTPS-запросов."
   },
   "variable": [
     {
       "key": "notify_mail",
       "value": "",
       "description": "Ваша почта — заполнить вручную"
-    },
-    {
-      "key": "notify_chat_id",
-      "value": "",
-      "description": "Ваш chat ID от команды /start у настроенного бота, без кавычек"
     },
     {
       "key": "notify_core",
@@ -43,6 +38,10 @@
     {
       "key": "notify_token",
       "value": ""
+    },
+    {
+      "key": "notify_registration_token",
+      "value": ""
     }
   ],
   "event": [
@@ -52,12 +51,11 @@
         "type": "text/javascript",
         "exec": [
           "const mail = String(pm.collectionVariables.get(\"notify_mail\") || \"\").trim();",
-          "const chat = String(pm.collectionVariables.get(\"notify_chat_id\") || \"\").trim();",
           "if (!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(mail)) throw new Error(\"Заполните notify_mail во вкладке Variables коллекции\");",
-          "if (!/^-?\\d+$/.test(chat) || !Number.isSafeInteger(Number(chat)) || Number(chat) === 0) throw new Error(\"Заполните notify_chat_id числовым chat ID из /start у бота\");",
           "const password = String(pm.collectionVariables.get(\"notify_password\") || \"\");",
           "if (!password) throw new Error(\"Заполните notify_password во вкладке Variables коллекции\");",
-          "pm.variables.set(\"notify_password_json\", JSON.stringify(password));"
+          "pm.variables.set(\"notify_password_json\", JSON.stringify(password));",
+          "pm.variables.set(\"notify_mail_json\", JSON.stringify(mail));"
         ]
       }
     }
@@ -79,7 +77,7 @@
             "url": "{{notify_core}}/auth/login",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"mail\": \"{{notify_mail}}\",\n  \"password\": {{notify_password_json}}\n}",
+              "raw": "{\n  \"mail\": {{notify_mail_json}},\n  \"password\": {{notify_password_json}}\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -131,7 +129,7 @@
                   "pm.test(\"Контакты совпадают\", () => {",
                   "    const user = pm.response.json();",
                   "    pm.expect(user.mail).to.equal(pm.collectionVariables.get(\"notify_mail\"));",
-                  "    pm.expect(String(user.telegram_id)).to.equal(String(pm.collectionVariables.get(\"notify_chat_id\")));",
+                  "    pm.expect(Number.isSafeInteger(user.telegram_id)).to.be.true;",
                   "});"
                 ]
               }
@@ -512,10 +510,7 @@
       "name": "Регистрация новой учётной записи",
       "item": [
         {
-          "name": "Зарегистрировать новую учётную запись",
-          "protocolProfileBehavior": {
-            "strictSSL": false
-          },
+          "name": "01 Ввести почту и получить ссылку",
           "request": {
             "method": "POST",
             "header": [
@@ -524,10 +519,11 @@
                 "value": "application/json"
               }
             ],
-            "url": "{{notify_core}}/users",
+            "url": "{{notify_core}}/auth/register/start",
+            "description": "После ответа откройте значение telegram_url в Telegram и нажмите «Старт».",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"mail\": \"{{notify_mail}}\",\n  \"telegram_id\": {{notify_chat_id}},\n  \"password\": {{notify_password_json}}\n}",
+              "raw": "{\n  \"mail\": {{notify_mail_json}}\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -542,11 +538,88 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test(\"HTTP 201\", () => pm.response.to.have.status(201));",
-                  "pm.collectionVariables.set(\"notify_user_id\", pm.response.json().id);"
+                  "if (pm.response.code === 201) pm.collectionVariables.set(\"notify_registration_token\", pm.response.json().registration_token);"
                 ]
               }
             }
-          ]
+          ],
+          "protocolProfileBehavior": {
+            "strictSSL": false
+          }
+        },
+        {
+          "name": "02 Проверить подтверждение Telegram",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{notify_registration_token}}"
+              }
+            ],
+            "url": "{{notify_core}}/auth/register/status",
+            "description": "Выполните после нажатия «Старт» в личном чате. Дождитесь telegram_confirmed: true."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"Telegram подтверждён\", () => pm.expect(pm.response.json().telegram_confirmed).to.be.true);"
+                ]
+              }
+            }
+          ],
+          "protocolProfileBehavior": {
+            "strictSSL": false
+          }
+        },
+        {
+          "name": "03 Задать пароль",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{notify_registration_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{notify_core}}/users",
+            "description": "Завершите регистрацию до истечения срока ссылки.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"password\": {{notify_password_json}}\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 201\", () => pm.response.to.have.status(201));",
+                  "if (pm.response.code === 201) {",
+                  "  pm.collectionVariables.set(\"notify_user_id\", pm.response.json().id);",
+                  "  pm.collectionVariables.unset(\"notify_registration_token\");",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "protocolProfileBehavior": {
+            "strictSSL": false
+          }
         }
       ]
     }

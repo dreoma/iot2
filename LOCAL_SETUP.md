@@ -144,7 +144,7 @@ curl --noproxy '*' --cacert certs/ca.crt \
 - `postman/iot2.postman_collection.json` — полный сценарий с тестовыми данными;
 - `postman/notifications.postman_collection.json` — уведомления на ваши контакты.
 
-Для второй коллекции заполните `notify_mail`, `notify_chat_id` и `notify_password` во вкладке Variables. Подробности — в `postman/NOTIFICATIONS.md`.
+Для второй коллекции заполните `notify_mail` и `notify_password` во вкладке Variables. Подробности — в `postman/NOTIFICATIONS.md`.
 
 Телеметрия отправляется в адаптер как обычный JSON:
 
@@ -159,9 +159,11 @@ curl --noproxy '*' -X POST http://localhost:8081/telemetry \
 
 ## 7. Настроить уведомления
 
-Для Telegram укажите `IOT_TELEGRAM_BOT_TOKEN` в `.env`. Пользователь должен
-отправить боту `/start`; полученный chat ID запишите в `users.telegram_id`.
-Пустой токен отключает Telegram.
+Для Telegram укажите `IOT_TELEGRAM_BOT_TOKEN` от BotFather в `.env`. При
+регистрации сайт выдаёт ссылку на личный чат с ботом. После нажатия «Старт»
+ядро само получает Telegram ID и сохраняет его при создании аккаунта.
+С пустым токеном новые регистрации через Telegram недоступны. Уже
+зарегистрированные пользователи могут входить по почте и паролю.
 
 По умолчанию Email отправляется в Mailpit, даже если указан настоящий адрес
 получателя. Для внешней почты задайте свой SMTP:
@@ -184,23 +186,23 @@ docker compose restart core-tls
 
 ## 8. Проверить тестами без реальных рассылок
 
-Временный override отключает Telegram и направляет Email в локальный Mailpit:
+Тестовый override направляет Telegram в локальную заглушку, а Email — в Mailpit.
+Стенд слушает отдельные локальные порты: `18443`, `18081`, `18025` и `18085`.
 
 ```bash
-docker compose -f docker-compose.yml -f tests/compose.local.yml up -d --no-build
-docker compose restart core-tls
-CHECK_EMAIL=1 python3 tests/integration.py
+docker compose -p iot2-test -f docker-compose.yml -f tests/compose.local.yml up --build -d --wait
+COMPOSE_PROJECT_NAME=iot2-test CHECK_EMAIL=1 python3 tests/integration.py
+docker compose -p iot2-test -f docker-compose.yml -f tests/compose.local.yml down
 ```
 
 Тест создаёт своих пользователей, устройства и правила, проверяет телеметрию,
 связь с владельцем, снимки событий и доставку писем, затем удаляет свои записи
 из баз. Тестовые письма остаются в локальном Mailpit.
 
-После проверки верните обычные настройки из `.env`, даже если тест завершился ошибкой:
+Чтобы после проверки запустить обычный проект с настройками из `.env`, выполните:
 
 ```bash
 docker compose up -d --no-build
-docker compose restart core-tls
 ```
 
 ## 9. Остановка, повторный запуск и диагностика
@@ -258,7 +260,8 @@ cmake --build http-adapter/build -j2
 - `iot-core` читает `config.json` из текущего каталога: его запускают из
   `iot-core` командой `./build/iot-core`. Конфиг ожидает основную БД на
   `127.0.0.1:5432`, базу правил на `127.0.0.1:5433`. Создайте базы, примените
-  схемы `db/init.sql`, `db/rules.sql` для новых баз и обе миграции `*_context.sql`.
+  схемы `db/init.sql`, `db/rules.sql` для новых баз и миграции из
+  [инструкции iot-core](iot-core/README.md#сборка-сервиса).
 - `http-adapter` запускают из `http-adapter` командой `./build/http-adapter`.
   Укажите `CORE_URL` — адрес HTTPS-входа ядра, `CORE_CA_FILE` — абсолютный путь
   к `certs/ca.crt`. Имя в URL должно совпадать с сертификатом (`core-tls`).

@@ -40,11 +40,13 @@ services:
       - ./iot-core/db/telemetry_context.sql:/migrations/telemetry_context.sql:ro
       - ./iot-core/db/notification_context.sql:/migrations/notification_context.sql:ro
       - ./iot-core/db/user_auth.sql:/migrations/user_auth.sql:ro
+      - ./iot-core/db/telegram_registration.sql:/migrations/telegram_registration.sql:ro
     entrypoint: ["/bin/sh", "-ec"]
     command:
       - |
         PGPASSWORD=iot_password psql -h db -U iot_user -d iot_core -v ON_ERROR_STOP=1 -f /migrations/telemetry_context.sql
         PGPASSWORD=iot_password psql -h db -U iot_user -d iot_core -v ON_ERROR_STOP=1 -f /migrations/user_auth.sql
+        PGPASSWORD=iot_password psql -h db -U iot_user -d iot_core -v ON_ERROR_STOP=1 -f /migrations/telegram_registration.sql
         PGPASSWORD=rules_password psql -h rules-db -U rules_user -d iot_rules -v ON_ERROR_STOP=1 -f /migrations/notification_context.sql
 
   iot-core:

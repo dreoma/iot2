@@ -16,14 +16,14 @@ class UserRepository
     explicit UserRepository(drogon::orm::DbClientPtr db);
     void setDb(drogon::orm::DbClientPtr db) { db_ = db; }
 
-    void create(const std::string &mail,
-                int64_t telegramId,
-                const std::string &passwordHash,
-                Success onSuccess,
-                Failure onFailure);
+    void startRegistration(const std::string &mail, const std::string &registrationDigest,
+                           const std::string &telegramDigest, Success done, Failure fail);
+    void registrationStatus(const std::string &registrationDigest, Success done, Failure fail);
+    bool confirmRegistration(const std::string &telegramDigest, int64_t telegramId);
+    void finishRegistration(const std::string &registrationDigest, const std::string &passwordHash,
+                            Success done, Failure fail);
     void update(long long userId,
                 const std::string &mail,
-                int64_t telegramId,
                 Success onSuccess,
                 Failure onFailure);
     void findById(int64_t userId, Success onSuccess, Failure onFailure);

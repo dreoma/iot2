@@ -1,6 +1,7 @@
 #pragma once
 
 #include <drogon/drogon.h>
+#include <string_view>
 
 namespace auth
 {
@@ -13,6 +14,7 @@ std::string hashPassword(const std::string &password);
 bool verifyPassword(const std::string &password, const std::string &hash);
 bool needsPasswordUpgrade(const std::string &hash);
 std::string newToken();
+bool isToken(std::string_view value);
 std::string tokenDigest(const drogon::HttpRequestPtr &request);
 std::string digest(const std::string &token);
 long long userId(const drogon::HttpRequestPtr &request);

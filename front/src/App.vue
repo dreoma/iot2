@@ -6,7 +6,6 @@ import AuthPanel from './components/AuthPanel.vue'
 import DeviceCard from './components/DeviceCard.vue'
 import ReadingTable from './components/ReadingTable.vue'
 import Icon from './components/Icon.vue'
-import SignalArt from './components/SignalArt.vue'
 
 const nav = [
   { id: 'overview', label: 'Обзор', icon: 'grid' },
@@ -287,19 +286,10 @@ onUnmounted(() => {
           </div>
 
           <template v-if="view === 'overview'">
-            <section class="overview-hero" aria-labelledby="hero-heading">
-              <SignalArt />
-              <div class="overview-hero-copy">
-                <span class="hero-label"><Icon name="activity" :size="18" /> Мониторинг</span>
-                <h2 id="hero-heading">Телеметрия устройств</h2>
-                <p>Просматривайте последние показания и историю измерений.</p>
-                <button class="button hero-button" type="button" @click="navigate('telemetry')">Открыть телеметрию</button>
-              </div>
-            </section>
             <div class="stats" aria-label="Сводка">
-              <div class="stat"><span class="tile-icon rose"><Icon name="devices" /></span><div><span>Всего устройств</span><strong>{{ updatedAt ? devices.length : '—' }}</strong></div></div>
+              <div class="stat"><span class="tile-icon leaf"><Icon name="devices" /></span><div><span>Всего устройств</span><strong>{{ updatedAt ? devices.length : '—' }}</strong></div></div>
               <div class="stat"><span class="tile-icon mint"><Icon name="activity" /></span><div><span>Устройств с данными</span><strong>{{ updatedAt ? telemetryCount : '—' }}</strong></div></div>
-              <div class="stat"><span class="tile-icon lilac"><Icon name="clock" /></span><div><span>Последнее измерение</span><strong class="time-stat">{{ displayDate(lastReading) }}</strong></div></div>
+              <div class="stat"><span class="tile-icon sage"><Icon name="clock" /></span><div><span>Последнее измерение</span><strong class="time-stat">{{ displayDate(lastReading) }}</strong></div></div>
             </div>
           </template>
 
@@ -317,7 +307,7 @@ onUnmounted(() => {
             </div>
             <div v-else-if="loading && !updatedAt" class="empty-state compact" role="status">Загружаем устройства…</div>
             <div v-else-if="!syncError || updatedAt" class="empty-state">
-              <span class="tile-icon rose"><Icon :name="devices.length ? 'search' : 'chip'" :size="25" /></span>
+              <span class="tile-icon leaf"><Icon :name="devices.length ? 'search' : 'chip'" :size="25" /></span>
               <h3>{{ devices.length ? 'Устройства не найдены' : 'Добавьте первое устройство' }}</h3>
               <p>{{ devices.length ? 'Измените запрос или выбранный фильтр.' : 'После подключения датчика здесь появятся его измерения.' }}</p>
               <button v-if="!devices.length" class="button secondary" type="button" @click="showCreate"><Icon name="plus" :size="19" /> Добавить устройство</button>
@@ -330,7 +320,7 @@ onUnmounted(() => {
             <ReadingTable v-if="readings.length" :readings="readings" show-device @open="openDevice" />
             <div v-else-if="loading && !updatedAt" class="empty-state compact" role="status">Загружаем измерения…</div>
             <div v-else-if="!syncError || updatedAt" class="empty-state">
-              <span class="tile-icon rose"><Icon name="activity" :size="25" /></span><h3>Измерений пока нет</h3>
+              <span class="tile-icon leaf"><Icon name="activity" :size="25" /></span><h3>Измерений пока нет</h3>
               <p>{{ query ? 'Нет измерений по этому запросу.' : 'История появится после первого пакета телеметрии.' }}</p>
             </div>
           </section>

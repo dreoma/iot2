@@ -17,7 +17,7 @@ const chart = computed(() => {
 <template>
   <article class="device-card">
     <div class="device-card-top">
-      <span class="tile-icon rose"><Icon name="chip" :size="23" /></span>
+      <span class="tile-icon leaf"><Icon name="chip" :size="23" /></span>
       <span class="status-pill" :class="{ 'has-data': last }"><span></span>{{ last ? 'Есть данные' : 'Ожидает данные' }}</span>
     </div>
     <h3><button class="device-link" type="button" @click="$emit('open', device.id)">{{ device.name }}</button></h3>
