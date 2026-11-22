@@ -17,7 +17,10 @@ class DeviceRepository
 
     void create(const std::string &name, bool notificationsEnabled, long long userId,
                 Success onSuccess, Failure onFailure);
-    void findAll(long long userId, Success onSuccess, Failure onFailure);
+                
+    // ДОБАВЛЕНЫ limit и offset
+    void findAll(long long userId, int limit, int offset, Success onSuccess, Failure onFailure);
+    
     void findById(long long deviceId, long long userId, Success onSuccess, Failure onFailure);
     void update(long long deviceId, const std::string &name, bool notificationsEnabled,
                 long long userId, Success onSuccess, Failure onFailure);

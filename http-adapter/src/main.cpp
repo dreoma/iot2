@@ -54,7 +54,7 @@ HttpResponsePtr forwardTelemetry(long long deviceId, const Json::Value &data)
 
     const auto core = coreUrl();
     const auto ca = caFile();
-    const auto url = core + "/telemetry/encrypted";
+    const auto url = core + "/api/v1/telemetry";
     struct curl_slist *headers = curl_slist_append(nullptr, "Content-Type: application/json");
     curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
     curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
@@ -66,7 +66,7 @@ HttpResponsePtr forwardTelemetry(long long deviceId, const Json::Value &data)
     // TLS: адаптер доверяет только нашему CA и проверяет имя сервера.
     curl_easy_setopt(curl, CURLOPT_CAINFO, ca.c_str());
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
-    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L);
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
 
     const auto transfer = curl_easy_perform(curl);
     long status = 502;

@@ -43,11 +43,12 @@ void DeviceRepository::create(const std::string &name,
         std::move(onSuccess), std::move(onFailure), name, notificationsEnabled, userId);
 }
 
-void DeviceRepository::findAll(long long userId, Success onSuccess, Failure onFailure)
-{
-    db_->execSqlAsync(std::string(kDevicesWithTelemetry) +
-                          " WHERE ud.user_id = $1 GROUP BY d.id, ud.user_id ORDER BY d.id",
-                      std::move(onSuccess), std::move(onFailure), userId);
+void DeviceRepository::findAll(long long userId, int limit, int offset, Success onSuccess, Failure onFailure) {
+    db_->execSqlAsync(
+        "SELECT * FROM devices WHERE user_id = $1 ORDER BY id LIMIT $2 OFFSET $3",
+        onSuccess, onFailure,
+        userId, limit, offset
+    );
 }
 
 void DeviceRepository::findById(long long deviceId, long long userId, Success onSuccess, Failure onFailure)

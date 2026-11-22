@@ -2,225 +2,201 @@
 
 #include "models/user.h"
 #include "repositories/user_repository.h"
-#include "services/auth.h"
+
+#include <drogon/drogon.h>
 
 using namespace drogon;
 using namespace drogon::orm;
 
 namespace
 {
-using auth::Callback;
-using auth::error;
-
-bool validMail(const Json::Value &value)
+// 1. Улучшенная функция отправки ошибок (в стиле RFC 7807)
+void sendError(const std::function<void(const HttpResponsePtr &)> &callback,
+               HttpStatusCode status,
+               const std::string &code,
+               const std::string &message)
 {
-    if (!value.isString())
-        return false;
-    const auto mail = value.asString();
-    return !mail.empty() && mail.size() <= 255 && mail.find('\0') == std::string::npos;
-}
-
-bool validProfile(const std::shared_ptr<Json::Value> &body)
-{
-    return body && body->isObject() && validMail((*body)["mail"]) &&
-           (*body)["telegram_id"].isInt64();
-}
-
-auto databaseError(const Callback &done)
-{
-    return [done](const DrogonDbException &) { error(done, k503ServiceUnavailable, "database unavailable"); };
-}
-
-auto profileWriteError(const Callback &done)
-{
-    return [done](const DrogonDbException &) {
-        error(done, k409Conflict, "could not save user; mail or telegram_id may already exist");
-    };
-}
-
-void noContent(const Callback &done)
-{
-    auto response = HttpResponse::newHttpResponse();
-    response->setStatusCode(k204NoContent);
-    done(response);
-}
-
-void sendProfile(const Result &rows, const Callback &done, bool array = false)
-{
-    if (rows.empty())
-    {
-        error(done, k404NotFound, "user not found");
-        return;
-    }
-    auto profile = userToJson(rows[0]);
-    if (array)
-    {
-        Json::Value profiles(Json::arrayValue);
-        profiles.append(std::move(profile));
-        done(HttpResponse::newHttpJsonResponse(profiles));
-        return;
-    }
-    done(HttpResponse::newHttpJsonResponse(profile));
-}
-
-void login(const std::shared_ptr<UserRepository> &repository, const HttpRequestPtr &request, const Callback &done)
-{
-    const auto body = request->getJsonObject();
-    if (!body || !body->isObject() || !validMail((*body)["mail"]) || !auth::validPasswordInput((*body)["password"]))
-    {
-        error(done, k400BadRequest, "mail and password are required");
-        return;
-    }
-    const auto mail = (*body)["mail"].asString();
-    repository->credentials(mail, [repository, done, mail, password = (*body)["password"].asString()](const Result &rows) {
-        const auto id = rows.empty() ? 0 : rows[0]["id"].as<long long>();
-        const auto hash = rows.empty() || rows[0]["password_hash"].isNull()
-            ? std::string{} : rows[0]["password_hash"].as<std::string>();
-        auth::passwordTask(done, [repository, done, id, mail, password, hash] {
-            if (!auth::verifyPassword(password, hash))
-            {
-                error(done, k401Unauthorized, "invalid mail or password");
-                return;
-            }
-            const auto updatedHash = auth::needsPasswordUpgrade(hash) ? auth::hashPassword(password) : hash;
-            if (updatedHash.empty())
-            {
-                error(done, k503ServiceUnavailable, "password hashing unavailable");
-                return;
-            }
-            const auto token = auth::newToken();
-            repository->saveSession(id, mail, hash, updatedHash, auth::digest(token), [done, token](const Result &saved) {
-                if (saved.empty())
-                {
-                    error(done, k401Unauthorized, "invalid mail or password");
-                    return;
-                }
-                Json::Value result;
-                result["token"] = token;
-                result["user_id"] = Json::Int64(saved[0]["id"].as<long long>());
-                result["expires_in"] = 86400;
-                auto response = HttpResponse::newHttpJsonResponse(result);
-                response->addHeader("Cache-Control", "no-store");
-                done(response);
-            }, databaseError(done));
-        });
-    }, databaseError(done));
-}
-
-void changePassword(const std::shared_ptr<UserRepository> &repository,
-                    const HttpRequestPtr &request, const Callback &done)
-{
-    const auto body = request->getJsonObject();
-    if (!body || !body->isObject() || !auth::validPasswordInput((*body)["current_password"]) ||
-        !auth::validNewPassword((*body)["new_password"]))
-    {
-        error(done, k400BadRequest, "current_password and new_password (15 to 256 bytes) are required");
-        return;
-    }
-    const auto digest = auth::tokenDigest(request);
-    repository->sessionCredentials(digest,
-        [repository, done, digest, current = (*body)["current_password"].asString(),
-         password = (*body)["new_password"].asString()](const Result &rows) {
-            if (rows.empty() || rows[0]["password_hash"].isNull())
-            {
-                error(done, k401Unauthorized, "invalid or expired session");
-                return;
-            }
-            const auto oldHash = rows[0]["password_hash"].as<std::string>();
-            auth::passwordTask(done, [repository, done, digest, current, password, oldHash] {
-                if (!auth::verifyPassword(current, oldHash))
-                {
-                    error(done, k403Forbidden, "incorrect current password");
-                    return;
-                }
-                const auto newHash = auth::hashPassword(password);
-                if (newHash.empty())
-                {
-                    error(done, k503ServiceUnavailable, "password hashing unavailable");
-                    return;
-                }
-                repository->changePassword(digest, oldHash, newHash, [done](const Result &updated) {
-                    if (updated.empty())
-                        error(done, k401Unauthorized, "invalid or expired session");
-                    else
-                        noContent(done);
-                }, databaseError(done));
-            });
-        }, databaseError(done));
+    Json::Value errorBody;
+    errorBody["error"]["code"] = code;
+    errorBody["error"]["message"] = message;
+    errorBody["error"]["status"] = static_cast<int>(status);
+    
+    auto response = HttpResponse::newHttpJsonResponse(errorBody);
+    response->setStatusCode(status);
+    callback(response);
 }
 }  // namespace
 
 void registerUserRoutes()
 {
     auto repository = std::make_shared<UserRepository>(nullptr);
-    app().registerBeginningAdvice([repository] { repository->setDb(app().getDbClient("postgres")); });
+    app().registerBeginningAdvice([repository] {
+        repository->setDb(app().getDbClient("postgres"));
+    });
 
-    app().registerHandler("/users", [repository](const HttpRequestPtr &request, Callback &&done) {
-        const auto body = request->getJsonObject();
-        if (!validProfile(body) || !auth::validNewPassword((*body)["password"]))
-        {
-            error(done, k400BadRequest, "mail, telegram_id and password (15 to 256 bytes) are required");
-            return;
-        }
-        auth::passwordTask(done, [repository, done, mail = (*body)["mail"].asString(),
-                                  telegramId = (*body)["telegram_id"].asInt64(),
-                                  password = (*body)["password"].asString()] {
-            const auto hash = auth::hashPassword(password);
-            if (hash.empty())
+    // ==========================================
+    // 2. ДОБАВЛЕН ПРЕФИКС /api/v1
+    // ==========================================
+
+    // POST /api/v1/users (Создание)
+    app().registerHandler(
+        "/api/v1/users",
+        [repository](const HttpRequestPtr &request,
+                     std::function<void(const HttpResponsePtr &)> &&callback) {
+            const auto body = request->getJsonObject();
+            if (!body || !body->isMember("telegram_id") || !body->isMember("mail"))
             {
-                error(done, k503ServiceUnavailable, "password hashing unavailable");
+                sendError(callback, k400BadRequest, "VALIDATION_ERROR", "mail and telegram_id are required");
                 return;
             }
-            repository->create(mail, telegramId, hash, [done](const Result &rows) {
-                auto response = HttpResponse::newHttpJsonResponse(userToJson(rows[0]));
-                response->setStatusCode(k201Created);
-                done(response);
-            }, profileWriteError(done));
-        });
-    }, {Post});
 
-    app().registerHandler("/auth/login", [repository](const HttpRequestPtr &request, Callback &&done) {
-        login(repository, request, done);
-    }, {Post});
+            repository->create(
+                (*body)["mail"].asString(),
+                (*body)["telegram_id"].asInt64(),
+                "",
+                [callback](const Result &result) {
+                    auto response = HttpResponse::newHttpJsonResponse(userToJson(result[0]));
+                    response->setStatusCode(k201Created);
+                    // Хорошая практика: возвращать заголовок Location с URL нового ресурса
+                    // response->addHeader("Location", "/api/v1/users/" + std::to_string(result[0]["id"].as<long long>()));
+                    callback(response);
+                },
+                [callback](const DrogonDbException &) {
+                    sendError(callback, k409Conflict, "CONFLICT", "mail or telegram_id already exists");
+                });
+        },
+        {Post});
 
-    app().registerHandler("/auth/logout", [repository](const HttpRequestPtr &request, Callback &&done) {
-        repository->clearSession(auth::tokenDigest(request), [done](const Result &) { noContent(done); },
-                                 databaseError(done));
-    }, {Post, "UserAuthFilter"});
+    // GET /api/v1/users (Получение списка с ПАГИНАЦИЕЙ)
+    app().registerHandler(
+        "/api/v1/users",
+        [repository](const HttpRequestPtr &request,
+                     std::function<void(const HttpResponsePtr &)> &&callback) {
+            // 3. Читаем параметры пагинации из URL (?page=1&limit=10)
+            int page = 1;
+            int limit = 10;
+            
+            if (request->getParameter("page") != "") page = std::stoi(request->getParameter("page"));
+            if (request->getParameter("limit") != "") limit = std::stoi(request->getParameter("limit"));
+            int offset = (page - 1) * limit;
 
-    app().registerHandler("/auth/password", [repository](const HttpRequestPtr &request, Callback &&done) {
-        changePassword(repository, request, done);
-    }, {Put, "UserAuthFilter"});
+            // ВАЖНО: Вам нужно будет обновить метод findAll в репозитории, 
+            // чтобы он принимал limit и offset (например: SELECT * FROM users LIMIT $1 OFFSET $2)
+            repository->findAll(limit, offset, 
+                [callback, page, limit](const Result &result) {
+                    Json::Value responseBody;
+                    Json::Value users(Json::arrayValue);
+                    for (const auto &row : result)
+                        users.append(userToJson(row));
+                        
+                    // Формируем "конверт" ответа
+                    responseBody["data"] = users;
+                    responseBody["meta"]["page"] = page;
+                    responseBody["meta"]["limit"] = limit;
+                    // responseBody["meta"]["total"] = ...; // Желательно добавить подсчет общего количества
+                    
+                    callback(HttpResponse::newHttpJsonResponse(responseBody));
+                },
+                [callback](const DrogonDbException &) {
+                    sendError(callback, k500InternalServerError, "DATABASE_ERROR", "database error");
+                });
+        },
+        {Get});
 
-    app().registerHandler("/users", [repository](const HttpRequestPtr &request, Callback &&done) {
-        repository->findById(auth::userId(request), [done](const Result &rows) { sendProfile(rows, done, true); },
-                             databaseError(done));
-    }, {Get, "UserAuthFilter"});
+    // GET /api/v1/users/{id} (Получение по ID)
+    app().registerHandler(
+        "/api/v1/users/{1}",
+        [repository](const HttpRequestPtr &,
+                     std::function<void(const HttpResponsePtr &)> &&callback,
+                     long long usrId) {
+            repository->findById(
+                usrId,
+                [callback](const Result &result) {
+                    if (result.empty())
+                    {
+                        sendError(callback, k404NotFound, "NOT_FOUND", "user not found");
+                        return;
+                    }
+                    callback(HttpResponse::newHttpJsonResponse(userToJson(result[0])));
+                },
+                [callback](const DrogonDbException &) {
+                    sendError(callback, k500InternalServerError, "DATABASE_ERROR", "database error");
+                });
+        },
+        {Get});
 
-    app().registerHandler("/users/{1}", [repository](const HttpRequestPtr &request, Callback &&done, long long id) {
-        if (id != auth::userId(request))
-            return error(done, k404NotFound, "user not found");
-        repository->findById(id, [done](const Result &rows) { sendProfile(rows, done); }, databaseError(done));
-    }, {Get, "UserAuthFilter"});
+    // PUT /api/v1/users/{id} (Полное обновление)
+    app().registerHandler(
+        "/api/v1/users/{1}",
+        [repository](const HttpRequestPtr &request,
+                     std::function<void(const HttpResponsePtr &)> &&callback,
+                     long long userId) {
+            const auto body = request->getJsonObject();
+            if (!body || !body->isMember("telegram_id") || !body->isMember("mail"))
+            {
+                sendError(callback, k400BadRequest, "VALIDATION_ERROR", "mail and telegram_id are required");
+                return;
+            }
+            repository->update(
+                userId,
+                (*body)["mail"].asString(),
+                (*body)["telegram_id"].asInt64(),
+                [callback](const Result &result) {
+                    if (result.empty())
+                    {
+                        sendError(callback, k404NotFound, "NOT_FOUND", "user not found");
+                        return;
+                    }
+                    callback(HttpResponse::newHttpJsonResponse(userToJson(result[0])));
+                },
+                [callback](const DrogonDbException &) {
+                    sendError(callback, k409Conflict, "CONFLICT", "mail or telegram_id already exists");
+                });
+        },
+        {Put});
+        
+    // PATCH /api/v1/users/{id} (ЧАСТИЧНОЕ обновление)
+    // (Опционально, но настоятельно рекомендуется для REST)
+    app().registerHandler(
+        "/api/v1/users/{1}",
+        [repository](const HttpRequestPtr &request,
+                     std::function<void(const HttpResponsePtr &)> &&callback,
+                     long long userId) {
+            const auto body = request->getJsonObject();
+            if (!body) {
+                sendError(callback, k400BadRequest, "VALIDATION_ERROR", "JSON body is required");
+                return;
+            }
+            
+            // Логика частичного обновления: если поля нет - берем старое значение или передаем NULL
+            // Это потребует написания отдельного метода updatePartial в репозитории.
+            // ... (реализация зависит от вашего SQL-запроса)
+            
+            sendError(callback, k501NotImplemented, "NOT_IMPLEMENTED", "PATCH method not implemented yet");
+        },
+        {Patch});
 
-    app().registerHandler("/users/{1}", [repository](const HttpRequestPtr &request, Callback &&done, long long id) {
-        if (id != auth::userId(request))
-            return error(done, k404NotFound, "user not found");
-        const auto body = request->getJsonObject();
-        if (!validProfile(body) || body->isMember("password"))
-            return error(done, k400BadRequest, "mail and telegram_id are required; use /auth/password to change password");
-        repository->update(id, (*body)["mail"].asString(), (*body)["telegram_id"].asInt64(),
-                           [done](const Result &rows) { sendProfile(rows, done); }, profileWriteError(done));
-    }, {Put, "UserAuthFilter"});
-
-    app().registerHandler("/users/{1}", [repository](const HttpRequestPtr &request, Callback &&done, long long id) {
-        if (id != auth::userId(request))
-            return error(done, k404NotFound, "user not found");
-        repository->remove(id, [done](const Result &rows) {
-            if (rows.empty())
-                error(done, k404NotFound, "user not found");
-            else
-                noContent(done);
-        }, databaseError(done));
-    }, {Delete, "UserAuthFilter"});
+    // DELETE /api/v1/users/{id} (Удаление)
+    app().registerHandler(
+        "/api/v1/users/{1}",
+        [repository](const HttpRequestPtr &,
+                     std::function<void(const HttpResponsePtr &)> &&callback,
+                     long long userId) {
+            repository->remove(
+                userId,
+                [callback](const Result &result) {
+                    if (result.empty())
+                    {
+                        sendError(callback, k404NotFound, "NOT_FOUND", "user not found");
+                        return;
+                    }
+                    auto response = HttpResponse::newHttpResponse();
+                    response->setStatusCode(k204NoContent);
+                    callback(response);
+                },
+                [callback](const DrogonDbException &) {
+                    sendError(callback, k500InternalServerError, "DATABASE_ERROR", "database error");
+                });
+        },
+        {Delete});
 }

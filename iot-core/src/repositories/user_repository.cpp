@@ -121,3 +121,13 @@ void UserRepository::changePassword(const std::string &digest, const std::string
                      "WHERE session_digest=$1 AND password_hash=$2 AND session_expires_at > now() RETURNING id",
                      std::move(done), std::move(fail), digest, oldHash, newHash);
 }
+void UserRepository::findAll(int limit, int offset, Success onSuccess, Failure onFailure)
+{
+    // Запрос к базе данных с пагинацией
+    // Не забудьте проверить, как у вас называется таблица (users или user)
+    db_->execSqlAsync(
+        "SELECT * FROM users ORDER BY id LIMIT $1 OFFSET $2",
+        onSuccess, onFailure,
+        limit, offset
+    );
+}

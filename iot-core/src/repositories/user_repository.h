@@ -6,7 +6,6 @@
 #include <functional>
 #include <string>
 
-// В этом классе хранится весь SQL для users и user_devices.
 class UserRepository
 {
   public:
@@ -21,6 +20,10 @@ class UserRepository
                 const std::string &passwordHash,
                 Success onSuccess,
                 Failure onFailure);
+                
+    // ДОБАВЛЕНО: Метод для получения списка с пагинацией
+    void findAll(int limit, int offset, Success onSuccess, Failure onFailure);
+
     void update(long long userId,
                 const std::string &mail,
                 int64_t telegramId,

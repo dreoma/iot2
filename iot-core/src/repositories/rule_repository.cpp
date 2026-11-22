@@ -40,11 +40,12 @@ void RuleRepository::save(long long id, long long userId, const Json::Value &rul
             rule["message"].asString(), rule.get("enabled", true).asBool(), id);
 }
 
-void RuleRepository::list(long long deviceId, long long userId, Success done, Failure fail) const
+// ОБНОВЛЕНО: Добавлены limit и offset
+void RuleRepository::list(long long deviceId, long long userId, int limit, int offset, Success done, Failure fail) const
 {
     app().getDbClient("rules")->execSqlAsync(
-        "SELECT to_jsonb(r) AS body FROM rules r WHERE device_id=$1 AND user_id=$2 ORDER BY id",
-        std::move(done), std::move(fail), deviceId, userId);
+        "SELECT to_jsonb(r) AS body FROM rules r WHERE device_id=$1 AND user_id=$2 ORDER BY id LIMIT $3 OFFSET $4",
+        std::move(done), std::move(fail), deviceId, userId, limit, offset);
 }
 
 void RuleRepository::remove(long long id, long long userId, Success done, Failure fail) const
@@ -77,9 +78,10 @@ void RuleRepository::enqueue(const Json::Value &notifications, Success done, Fai
     )SQL", std::move(done), std::move(fail), json);
 }
 
-void RuleRepository::notifications(long long userId, Success done, Failure fail) const
+// ОБНОВЛЕНО: Добавлены limit и offset
+void RuleRepository::notifications(long long userId, int limit, int offset, Success done, Failure fail) const
 {
     app().getDbClient("rules")->execSqlAsync(
-        "SELECT to_jsonb(n) AS body FROM notifications n WHERE user_id=$1 ORDER BY id DESC LIMIT 100",
-        std::move(done), std::move(fail), userId);
+        "SELECT to_jsonb(n) AS body FROM notifications n WHERE user_id=$1 ORDER BY id DESC LIMIT $2 OFFSET $3",
+        std::move(done), std::move(fail), userId, limit, offset);
 }
